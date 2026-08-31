@@ -1,38 +1,52 @@
-# Demo Devices Template
+# Sonos
 
-This is the user documentation of the integration. Gladys re-hosts this file
-and shows a permanent **Documentation** link to it in the Configuration screen
-(in the user's language, with English as the fallback) — it is when
-configuring that the user needs it most. Keep the short onboarding hints in
-the `section` blocks of the manifest `config_schema`; put the long
-step-by-step (screenshots, troubleshooting…) here.
+Control your Sonos speakers directly over your local network: play, pause,
+previous/next track, volume, and play any content URI (a Spotify playlist or
+track, a radio stream...) sent to it - typically from a Gladys scene.
 
-## What you get
+## Why this integration, alongside Gladys' native Sonos service
 
-Six demo devices show up after installation: a weather station (real data
-from Open-Meteo), a switch, a dimmable light, a smart plug with power
-metering, a motion sensor and a camera.
+- **VLAN-safe discovery.** The native Sonos service only finds speakers
+  through SSDP multicast (`239.255.255.250:1900`), which most routers do not
+  forward across VLANs/subnets - a live, unresolved limitation as of this
+  writing. This integration adds a **Known IPs** field: one reachable Sonos
+  speaker's IP is enough, because Sonos speakers already know every room in
+  the household and share that layout with whichever one you ask.
+- **Play any content URI.** Each device gets a "Play URI" feature: send it a
+  URI (e.g. `spotify:playlist:...`) and it starts playing there. Combine it
+  with an integration that lists content (playlists, recently played
+  tracks...) through a Gladys scene: read the selected value, write it to
+  "Play URI".
 
 ## Configuration
 
-1. Open the **Configuration** tab of the integration.
-2. Set the **latitude** and **longitude** the demo weather station should
-   observe (they default to Paris), and pick your temperature unit.
-3. Save: the devices appear in the **Discovery** tab, ready to be added.
+1. Open the integration's **Configuration** tab.
+2. If your Sonos speakers are reachable from Gladys without any special
+   network setup, leave **Known IPs** empty and run a scan - automatic (SSDP)
+   discovery is enough.
+3. If Gladys and your Sonos speakers are on different VLANs/subnets, fill in
+   **one** speaker's IP address in **Known IPs**, save, then run a scan (the
+   **Scan for Sonos speakers** action, or the Discovery tab). That single IP
+   is enough to recover every room.
 
-The **Prefer the local connection** toggle drives the demo plug: it reports
-the channel it actually uses as a badge (local or cloud), with an orange dot
-when it runs degraded (local refused, cloud fallback).
+## Bridging content from another integration
 
-## Actions
+A device's "Play URI" feature accepts any string value through its normal
+`text` command - no special wiring needed. In a Gladys scene: read the state
+of the content-listing feature you want to play from (its trigger condition),
+then add an action that sets this device's "Play URI" feature to that same
+value.
 
-- **Test the weather provider** — performs a live request to Open-Meteo and
-  shows the current temperature and humidity under the button.
-- **Identify a device** — pick one of your devices in the list and it will
-  signal itself (the demo light "blinks" in the logs).
+## Limitations
 
-## Troubleshooting
-
-The integration logs everything it does: check the integration logs from the
-Gladys UI (or `docker logs` on the host) with `LOG_LEVEL=debug` for the full
-detail.
+- Local network control only: no cloud account, nothing works if the speaker
+  is unreachable at the IP address Gladys currently has for it.
+- No real-time push updates (playing/paused, volume): state is polled
+  periodically, so the dashboard can lag a few seconds behind reality.
+- Group/stereo-pair topology is read once per scan; a device grouped after
+  the last scan is controlled directly rather than through its group's
+  coordinator.
+- Playing a URI (`spotify:...`, etc.) requires the target speaker to already
+  support that content source natively (e.g. Spotify linked as a service
+  inside the Sonos app) - this integration does not manage that account link,
+  it only sends the URI over the local network.

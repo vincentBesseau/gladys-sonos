@@ -1,102 +1,61 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "Sonos",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "Control Sonos speakers locally, including VLAN setups, and play any content URI.",
+    "fr": "Contrôlez vos enceintes Sonos en local, y compris en VLAN, et lancez n'importe quelle URI."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/vincentbesseau/gladys-sonos:0.1.0",
   "gladys_version": ">=4.86.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/vincentBesseau/gladys-sonos/main/cover.jpg",
+  "categories": ["multimedia"],
+  "transports": ["local"],
+  "network_discovery": [
+    {
+      "type": "ssdp",
+      "st": "urn:schemas-upnp-org:device:ZonePlayer:1"
+    }
+  ],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
-      "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+      "label": {
+        "en": "Sonos, controlled locally",
+        "fr": "Sonos, piloté en local"
       },
-      "links": [
-        {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
-        }
-      ]
+      "description": {
+        "en": "This integration controls your Sonos speakers directly over your local network - no cloud account, no Sonos app login. It discovers them automatically (SSDP). If your Sonos speakers are on a different VLAN/subnet than Gladys, automatic discovery will not find them: fill in one known IP below instead, it is enough to recover the whole household.",
+        "fr": "Cette intégration pilote vos enceintes Sonos directement sur votre réseau local - aucun compte cloud, aucune connexion à l'app Sonos. Elle les découvre automatiquement (SSDP). Si vos enceintes Sonos sont sur un VLAN/sous-réseau différent de Gladys, la découverte automatique ne les trouvera pas : renseignez plutôt une IP connue ci-dessous, cela suffit à retrouver toute l'installation."
+      }
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "known_ips",
+      "type": "string",
+      "label": {
+        "en": "Known IPs (VLAN fix)",
+        "fr": "IPs connues (contournement VLAN)"
       },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
-    },
-    {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
       "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+        "en": "One Sonos speaker IP is enough: this integration then asks it for your whole household's layout. Separate multiple entries with a comma or a new line.",
+        "fr": "L'IP d'une seule enceinte Sonos suffit : l'intégration lui demande ensuite l'organisation de toute votre installation. Séparez plusieurs entrées par une virgule ou un retour à la ligne."
       },
-      "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
-    },
-    {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
-      "description": {
-        "en": "How often sensors are polled, in seconds.",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes."
-      },
-      "required": false,
-      "default": 300,
-      "min": 30,
-      "max": 3600
+      "placeholder": {
+        "en": "192.168.10.21",
+        "fr": "192.168.10.21"
+      }
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "scan_now",
+      "label": {
+        "en": "Scan for Sonos speakers",
+        "fr": "Rechercher les enceintes Sonos"
+      },
       "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
     }
   ]
 }

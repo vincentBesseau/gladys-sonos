@@ -1,8 +1,8 @@
 {
-  "name": "gladys-integration-template-js",
-  "version": "1.0.0",
+  "name": "gladys-sonos",
+  "version": "0.1.0",
   "private": true,
-  "description": "Official starter template to build an external integration for Gladys Assistant with the JavaScript SDK.",
+  "description": "External integration to control Sonos speakers locally from Gladys Assistant, including VLAN setups, and play arbitrary content URIs.",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -16,7 +16,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "@gladysassistant/integration-sdk": "^0.13.0"
+    "@gladysassistant/integration-sdk": "^0.13.0",
+    "@svrooij/sonos": "^2.5.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

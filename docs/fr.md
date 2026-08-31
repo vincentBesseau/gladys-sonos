@@ -1,43 +1,58 @@
-# Template de démonstration
+# Sonos
 
-Ceci est la documentation utilisateur de l'intégration. Gladys ré-héberge ce
-fichier et affiche un lien **Documentation** permanent vers lui dans l'écran
-de configuration (dans la langue de l'utilisateur, avec l'anglais en repli) —
-c'est au moment de configurer que l'utilisateur en a le plus besoin. Gardez
-les courtes indications d'accueil dans les blocs `section` du `config_schema`
-du manifest ; mettez ici le pas-à-pas détaillé (captures d'écran, dépannage…).
+Contrôlez vos enceintes Sonos directement sur votre réseau local : lecture,
+pause, morceau précédent/suivant, volume, et lecture de n'importe quelle URI
+de contenu (une playlist ou un morceau Spotify, un flux radio...) envoyée
+depuis, typiquement, une scène Gladys.
 
-## Ce que vous obtenez
+## Pourquoi cette intégration, en plus du service Sonos natif de Gladys
 
-Six appareils de démonstration apparaissent après l'installation : une
-station météo (vraies données Open-Meteo), un interrupteur, une lampe
-variable, une prise connectée avec mesure de puissance, un détecteur de
-mouvement et une caméra.
+- **Découverte compatible VLAN.** Le service Sonos natif ne trouve les
+  enceintes que par multicast SSDP (`239.255.255.250:1900`), que la plupart
+  des routeurs ne relaient pas entre VLAN/sous-réseaux — une limitation
+  actuellement non résolue. Cette intégration ajoute un champ **IPs
+  connues** : l'IP d'une seule enceinte joignable suffit, car les enceintes
+  Sonos connaissent déjà toutes les pièces de l'installation et partagent
+  cette organisation avec celle qu'on interroge.
+- **Lecture de n'importe quelle URI.** Chaque appareil dispose d'une
+  fonctionnalité « Lire une URI » : envoyez-lui une URI (ex.
+  `spotify:playlist:...`) et la lecture démarre dessus. Combinez-la avec une
+  intégration qui liste des contenus (playlists, morceaux récents...) via une
+  scène Gladys : lisez la valeur sélectionnée, écrivez-la sur « Lire une
+  URI ».
 
 ## Configuration
 
 1. Ouvrez l'onglet **Configuration** de l'intégration.
-2. Renseignez la **latitude** et la **longitude** que la station météo de
-   démonstration doit observer (Paris par défaut), et choisissez votre unité
-   de température.
-3. Enregistrez : les appareils apparaissent dans l'onglet **Découverte**,
-   prêts à être ajoutés.
+2. Si vos enceintes Sonos sont joignables depuis Gladys sans configuration
+   réseau particulière, laissez **IPs connues** vide et lancez un scan — la
+   découverte automatique (SSDP) suffit.
+3. Si Gladys et vos enceintes Sonos sont sur des VLAN/sous-réseaux
+   différents, renseignez l'adresse IP d'**une** enceinte dans **IPs
+   connues**, enregistrez, puis lancez un scan (action **Rechercher les
+   enceintes Sonos**, ou l'onglet Découverte). Cette seule IP suffit à
+   retrouver toutes les pièces.
 
-Le réglage **Préférer la connexion locale** pilote la prise de
-démonstration : elle affiche en badge le canal réellement utilisé (local ou
-cloud), avec un point orange quand elle fonctionne en mode dégradé (local
-refusé, bascule cloud).
+## Faire le pont avec le contenu d'une autre intégration
 
-## Actions
+La fonctionnalité « Lire une URI » d'un appareil accepte n'importe quelle
+valeur texte via sa commande `text` standard — aucun câblage particulier
+nécessaire. Dans une scène Gladys : lisez l'état de la fonctionnalité qui
+liste le contenu à lancer (comme déclencheur), puis ajoutez une action qui
+écrit cette même valeur sur « Lire une URI » de cet appareil.
 
-- **Tester le fournisseur météo** — effectue une requête en direct vers
-  Open-Meteo et affiche la température et l'humidité actuelles sous le
-  bouton.
-- **Identifier un appareil** — choisissez un de vos appareils dans la liste
-  et il se signale (la lampe de démonstration « clignote » dans les logs).
+## Limites
 
-## Dépannage
-
-L'intégration journalise tout ce qu'elle fait : consultez les logs de
-l'intégration depuis l'interface Gladys (ou `docker logs` sur l'hôte) avec
-`LOG_LEVEL=debug` pour le détail complet.
+- Contrôle réseau local uniquement : aucun compte cloud, rien ne fonctionne
+  si l'enceinte n'est pas joignable à l'adresse IP que Gladys a actuellement
+  pour elle.
+- Pas de mise à jour temps réel (lecture/pause, volume) : l'état est
+  interrogé périodiquement, le tableau de bord peut donc avoir quelques
+  secondes de retard.
+- La topologie des groupes/paires stéréo n'est lue qu'à chaque scan ; un
+  appareil regroupé après le dernier scan est piloté directement plutôt que
+  via le coordinateur de son groupe.
+- Lire une URI (`spotify:...`, etc.) suppose que l'enceinte visée prenne déjà
+  nativement en charge cette source de contenu (ex. Spotify lié comme service
+  dans l'app Sonos) — cette intégration ne gère pas cette liaison de compte,
+  elle se contente d'envoyer l'URI sur le réseau local.
