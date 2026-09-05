@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { DEVICE_FEATURE_TYPES } from '@gladysassistant/integration-sdk';
 
 import { convertToGladysDevice } from '../src/convertToGladysDevice.js';
 import {
@@ -22,7 +23,7 @@ const gladysStub = {
   },
 };
 
-test('convertToGladysDevice builds prefixed external ids and the 8 features', () => {
+test('convertToGladysDevice builds prefixed external ids and the 9 features', () => {
   const device = convertToGladysDevice(gladysStub, {
     uuid: 'RINCON_1',
     name: 'Salon',
@@ -31,7 +32,7 @@ test('convertToGladysDevice builds prefixed external ids and the 8 features', ()
 
   assert.equal(device.external_id, 'ext:ext-dev-sonos:sonos:RINCON_1');
   assert.equal(device.name, 'Salon');
-  assert.equal(device.features.length, 8);
+  assert.equal(device.features.length, 9);
   assert.equal(device.should_poll, true);
   assert.ok(device.poll_frequency > 0);
 
@@ -48,6 +49,12 @@ test('convertToGladysDevice builds prefixed external ids and the 8 features', ()
   assert.equal(byExternalId['play-uri'].read_only, false);
   assert.equal(byExternalId['now-playing'].category, 'text');
   assert.equal(byExternalId['now-playing'].read_only, true);
+  assert.equal(byExternalId['play-notification'].category, 'music');
+  assert.equal(
+    byExternalId['play-notification'].type,
+    DEVICE_FEATURE_TYPES.MUSIC.PLAY_NOTIFICATION,
+  );
+  assert.equal(byExternalId['play-notification'].read_only, false);
 });
 
 test('sonosUuidFromFeature extracts the uuid before the feature key', () => {
@@ -71,6 +78,7 @@ function fakeClient(overrides = {}) {
     previous: async (uuid) => calls.push(['previous', uuid]),
     setVolume: async (uuid, v) => calls.push(['setVolume', uuid, v]),
     playUri: async (uuid, uri) => calls.push(['playUri', uuid, uri]),
+    playNotification: async (uuid, uri) => calls.push(['playNotification', uuid, uri]),
     ...overrides,
   };
 }
@@ -102,6 +110,20 @@ test('setDeviceValue dispatches the "Play URI" text feature to playUri', async (
 
   assert.deepEqual(client.calls, [
     ['playUri', 'RINCON_1', 'spotify:playlist:37i9dQZF1E8PXhqiaG89Vv'],
+  ]);
+});
+
+test('setDeviceValue dispatches the "Play Notification" feature to playNotification', async () => {
+  const client = fakeClient();
+  const feature = {
+    external_id: 'ext:sel:sonos:RINCON_1:play-notification',
+    type: DEVICE_FEATURE_TYPES.MUSIC.PLAY_NOTIFICATION,
+  };
+
+  await setDeviceValue(client, feature, 'https://example.com/notification.mp3');
+
+  assert.deepEqual(client.calls, [
+    ['playNotification', 'RINCON_1', 'https://example.com/notification.mp3'],
   ]);
 });
 

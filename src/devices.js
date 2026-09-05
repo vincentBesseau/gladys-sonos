@@ -80,6 +80,11 @@ export async function setDeviceValue(client, feature, value) {
     case DEVICE_FEATURE_TYPES.MUSIC.VOLUME:
       await client.setVolume(uuid, value);
       break;
+    case DEVICE_FEATURE_TYPES.MUSIC.PLAY_NOTIFICATION:
+      // Not awaited by playNotification itself (see its doc comment) - this
+      // call still resolves quickly, once the notification is dispatched.
+      await client.playNotification(uuid, String(value));
+      break;
     case DEVICE_FEATURE_TYPES.TEXT.TEXT:
       await client.playUri(uuid, String(value));
       break;

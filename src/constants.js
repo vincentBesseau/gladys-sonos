@@ -70,3 +70,26 @@ export const MUSIC_PLAYBACK_STATE = {
 // playback-state feature; everything else (STOPPED, PAUSED_PLAYBACK,
 // TRANSITIONING...) is reported as paused.
 export const PLAYING_TRANSPORT_STATES = ['PLAYING'];
+
+// Play Notification: matches Gladys' native Sonos service's own hardcoded
+// values (server/services/sonos/lib/sonos.setValue.js), for the same "talk
+// on a speaker" scene UX regardless of which of the two integrations a
+// device belongs to.
+//
+// One real difference from native, that these constants cannot fix: native
+// runs inside Gladys core (host-networked), so it receives the speaker's own
+// UPnP "playback stopped" event and @svrooij/sonos's PlayNotification()
+// reverts as soon as that fires. This integration runs in its own container
+// (see convertToGladysDevice.js's should_poll comment: no UPnP eventing
+// reaches it), so that event never arrives and PlayNotification always falls
+// back to its `timeout` - the announcement's revert is not tied to how long
+// the actual audio lasts, only to this fixed duration.
+export const PLAY_NOTIFICATION_VOLUME_DEFAULT = 45;
+export const PLAY_NOTIFICATION_TIMEOUT_SECONDS = 20;
+export const PLAY_NOTIFICATION_DELAY_MS = 700;
+
+// PlayNotification() can run the full PLAY_NOTIFICATION_TIMEOUT_SECONDS
+// before reverting (see above) plus its own SOAP round trips: comfortably
+// longer than SONOS_COMMAND_TIMEOUT_MS, which stays right for every other
+// command.
+export const PLAY_NOTIFICATION_COMMAND_TIMEOUT_MS = (PLAY_NOTIFICATION_TIMEOUT_SECONDS + 10) * 1000;

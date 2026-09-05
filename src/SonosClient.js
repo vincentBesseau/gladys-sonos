@@ -27,6 +27,10 @@ import {
   SWITCH_TO_QUEUE_SETTLE_MS,
   PLAY_URI_MAX_ATTEMPTS,
   PLAY_URI_TIMEOUT_MS,
+  PLAY_NOTIFICATION_VOLUME_DEFAULT,
+  PLAY_NOTIFICATION_TIMEOUT_SECONDS,
+  PLAY_NOTIFICATION_DELAY_MS,
+  PLAY_NOTIFICATION_COMMAND_TIMEOUT_MS,
 } from './constants.js';
 
 /**
@@ -159,6 +163,21 @@ export class SonosClient {
   }
 
   /**
+   * A FRESH, standalone SonosDevice for a uuid - not the instance discover()
+   * built (which SonosManager wires into its own group/event tracking).
+   * Needed by playUri and playNotification: see playUri's doc comment for
+   * why a manager-tracked instance was observed to behave unreliably for a
+   * multi-call command sequence.
+   * @param {string} uuid - The Sonos device uuid.
+   * @returns {object} A new, standalone @svrooij/sonos SonosDevice instance.
+   * @throws {Error} If the device was not seen in the last discovery.
+   */
+  freshDeviceFor(uuid) {
+    const discoveredDevice = this.deviceFor(uuid);
+    return new SonosDevice(discoveredDevice.host, discoveredDevice.port, discoveredDevice.uuid);
+  }
+
+  /**
    * Run one command against a device's SOAP endpoint, bounded by a timeout:
    * a single unresponsive speaker fails its own command instead of hanging
    * the caller forever (observed live - see SONOS_COMMAND_TIMEOUT_MS's doc
@@ -247,19 +266,14 @@ export class SonosClient {
   async playUri(uuid, uri) {
     await this.runCommand(
       uuid,
-      async (discoveredDevice) => {
-        // A FRESH, standalone SonosDevice for the actual command - not the
-        // instance discover() built (which SonosManager wires into its own
-        // group/event tracking). Observed live: back-to-back AddUriToQueue +
-        // SwitchToQueue + Play on THAT manager-tracked instance intermittently
-        // left the speaker in PAUSED_PLAYBACK with no error, while the exact
-        // same sequence on a plain `new SonosDevice(host, port, uuid)`
+      async () => {
+        // A FRESH, standalone SonosDevice for the actual command (see
+        // freshDeviceFor's doc comment) - observed live: back-to-back
+        // AddUriToQueue + SwitchToQueue + Play on the manager-tracked
+        // instance intermittently left the speaker in PAUSED_PLAYBACK with
+        // no error, while the exact same sequence on a fresh instance
         // succeeded every time in isolation.
-        const device = new SonosDevice(
-          discoveredDevice.host,
-          discoveredDevice.port,
-          discoveredDevice.uuid,
-        );
+        const device = this.freshDeviceFor(uuid);
         let lastState = null;
         for (let attempt = 1; attempt <= PLAY_URI_MAX_ATTEMPTS; attempt += 1) {
           await device.AddUriToQueue(uri, 1, true);
@@ -301,6 +315,43 @@ export class SonosClient {
         volume: volumeInfo.CurrentVolume,
         nowPlaying: formatNowPlaying(positionInfo.TrackMetaData),
       };
+    });
+  }
+
+  /**
+   * Interrupt whatever a device is playing to announce a URI (a TTS file, a
+   * notification sound...), then revert back - @svrooij/sonos's own
+   * PlayNotification(), matching Gladys' native Sonos service's parameters
+   * (see PLAY_NOTIFICATION_* in constants.js) for the same "talk on a
+   * speaker" scene UX regardless of which integration a device belongs to.
+   *
+   * Not awaited by callers on purpose (see setDeviceValue in devices.js):
+   * PlayNotification() normally only reverts once it sees the speaker's own
+   * "playback stopped" UPnP event - which this integration's container can
+   * never receive (see convertToGladysDevice.js's should_poll comment), so
+   * it always falls back to the fixed PLAY_NOTIFICATION_TIMEOUT_SECONDS
+   * instead. That alone routinely exceeds Gladys core's fixed, non-
+   * overridable 5s command-ack window for a device command
+   * (externalIntegration.sendCommand.js's COMMAND_TIMEOUT_MS) - a real
+   * command taking that long must not look like a failed/timed-out one.
+   * @param {string} uuid - The Sonos device uuid.
+   * @param {string} trackUri - URI of the audio to announce.
+   * @returns {Promise<void>} Resolves once the notification is dispatched
+   *   (not once it has finished playing - see above).
+   */
+  async playNotification(uuid, trackUri) {
+    const device = this.freshDeviceFor(uuid);
+    withTimeout(
+      device.PlayNotification({
+        trackUri,
+        onlyWhenPlaying: false,
+        volume: PLAY_NOTIFICATION_VOLUME_DEFAULT,
+        timeout: PLAY_NOTIFICATION_TIMEOUT_SECONDS,
+        delayMs: PLAY_NOTIFICATION_DELAY_MS,
+      }),
+      PLAY_NOTIFICATION_COMMAND_TIMEOUT_MS,
+    ).catch((e) => {
+      logger.error(`Sonos: notification failed on ${device.name || uuid}: ${e.message}`);
     });
   }
 }

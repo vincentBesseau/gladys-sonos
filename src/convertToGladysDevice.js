@@ -111,6 +111,21 @@ export function convertToGladysDevice(gladys, sonosDevice) {
         keep_history: false,
       },
       {
+        name: `${sonosDevice.name} - Play Notification`,
+        external_id: ids.feature('play-notification'),
+        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
+        type: DEVICE_FEATURE_TYPES.MUSIC.PLAY_NOTIFICATION,
+        // Matches Gladys' native Sonos service's own declaration for this
+        // feature: min/max carry no meaning for a URI value, 1/1 is its
+        // existing placeholder (same NOT NULL DB constraint noted on Play URI
+        // above, just a different arbitrary pair).
+        min: 1,
+        max: 1,
+        keep_history: false,
+        read_only: false,
+        has_feedback: false,
+      },
+      {
         name: `${sonosDevice.name} - Now playing`,
         external_id: ids.feature('now-playing'),
         category: DEVICE_FEATURE_CATEGORIES.TEXT,
