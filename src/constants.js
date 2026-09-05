@@ -52,9 +52,10 @@ export const SWITCH_TO_QUEUE_SETTLE_MS = 3 * 1000;
 // reliably recovered live. Bounded to 2 full attempts.
 export const PLAY_URI_MAX_ATTEMPTS = 2;
 
-// Generous enough for PLAY_URI_MAX_ATTEMPTS full sequences (each one enqueue
-// + switch + play + the settle wait), so the outer timeout in runCommand
-// never cuts a legitimate retry short.
+// Bounds playUri's background confirmation phase (confirmPlayUriStarted,
+// not awaited by playUri itself - see its doc comment), generous enough for
+// PLAY_URI_MAX_ATTEMPTS full retry sequences (each one enqueue + switch +
+// play + the settle wait), so a legitimate retry is never cut short.
 export const PLAY_URI_TIMEOUT_MS = PLAY_URI_MAX_ATTEMPTS * (SWITCH_TO_QUEUE_SETTLE_MS + 5 * 1000);
 
 // How often the poll-driven state (playback state, volume) is refreshed.

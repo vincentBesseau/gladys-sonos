@@ -54,3 +54,11 @@ test('playNotification rejects for a uuid not seen in the last discovery', async
     /currently unreachable/,
   );
 });
+
+test('playUri rejects for a uuid not seen in the last discovery', async () => {
+  const client = new SonosClient();
+  await assert.rejects(
+    () => client.playUri('RINCON_UNKNOWN', 'spotify:playlist:abc'),
+    /currently unreachable/,
+  );
+});

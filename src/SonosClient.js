@@ -259,42 +259,75 @@ export class SonosClient {
    *   3. Play().
    * Metadata (including the Spotify service token) is guessed by
    * @svrooij/sonos itself from the URI shape.
+   *
+   * Confirming playback actually started, and retrying the whole sequence
+   * if the speaker was left paused (observed live - see
+   * confirmPlayUriStarted), is NOT awaited here: even a single settle wait
+   * (SWITCH_TO_QUEUE_SETTLE_MS) routinely pushes past Gladys core's fixed,
+   * non-overridable 5s command-ack window for a device command
+   * (externalIntegration.sendCommand.js's COMMAND_TIMEOUT_MS) - a command
+   * that is actually working must never look like a failed/timed-out one.
    * @param {string} uuid - The Sonos device uuid.
    * @param {string} uri - The content URI (e.g. `spotify:playlist:...`).
-   * @returns {Promise<void>} Resolves once playback has started.
+   * @returns {Promise<void>} Resolves once the content is queued and the
+   *   transport pointed at it (not once playback is confirmed - see above).
    */
   async playUri(uuid, uri) {
-    await this.runCommand(
-      uuid,
-      async () => {
-        // A FRESH, standalone SonosDevice for the actual command (see
-        // freshDeviceFor's doc comment) - observed live: back-to-back
-        // AddUriToQueue + SwitchToQueue + Play on the manager-tracked
-        // instance intermittently left the speaker in PAUSED_PLAYBACK with
-        // no error, while the exact same sequence on a fresh instance
-        // succeeded every time in isolation.
-        const device = this.freshDeviceFor(uuid);
-        let lastState = null;
-        for (let attempt = 1; attempt <= PLAY_URI_MAX_ATTEMPTS; attempt += 1) {
+    // A FRESH, standalone SonosDevice for the actual command (see
+    // freshDeviceFor's doc comment) - observed live: back-to-back
+    // AddUriToQueue + SwitchToQueue + Play on the manager-tracked instance
+    // intermittently left the speaker in PAUSED_PLAYBACK with no error,
+    // while the exact same sequence on a fresh instance succeeded every
+    // time in isolation.
+    const device = this.freshDeviceFor(uuid);
+    try {
+      await withTimeout(
+        (async () => {
           await device.AddUriToQueue(uri, 1, true);
           await device.SwitchToQueue();
           await device.Play();
-          await new Promise((resolve) => setTimeout(resolve, SWITCH_TO_QUEUE_SETTLE_MS));
-          ({ CurrentTransportState: lastState } =
-            await device.AVTransportService.GetTransportInfo());
-          if (lastState === 'PLAYING' || lastState === 'TRANSITIONING') {
-            return;
-          }
-          logger.debug(
-            `Sonos: playUri attempt ${attempt} left the speaker ${lastState}, retrying.`,
-          );
-        }
-        // Every attempt left the speaker paused: the playback-state feature
-        // (polled independently) will still reflect the true outcome, but
-        // report the failure now rather than claiming success silently.
-        throw new Error(`content queued but playback did not start (still ${lastState})`);
-      },
-      PLAY_URI_TIMEOUT_MS,
+        })(),
+        SONOS_COMMAND_TIMEOUT_MS,
+      );
+    } catch (e) {
+      throw new Error(`Sonos speaker "${device.name}" did not respond: ${e.message}`, { cause: e });
+    }
+    withTimeout(this.confirmPlayUriStarted(device, uri), PLAY_URI_TIMEOUT_MS).catch((e) => {
+      logger.debug(`Sonos: playUri confirmation failed on ${device.name}: ${e.message}`);
+    });
+  }
+
+  /**
+   * Confirm a playUri() dispatch actually started playback, retrying the
+   * whole enqueue+switch+play sequence (bounded, PLAY_URI_MAX_ATTEMPTS) if
+   * the speaker was left paused - observed live: intermittent, a settle
+   * wait after SwitchToQueue()+Play() is not always enough on the first
+   * try. Not awaited by playUri - see its doc comment for why.
+   * @param {object} device - The fresh SonosDevice playUri already dispatched to.
+   * @param {string} uri - The content URI, replayed on a retry.
+   * @returns {Promise<void>} Resolves once confirmed, or the attempt ceiling is hit.
+   */
+  async confirmPlayUriStarted(device, uri) {
+    let lastState = null;
+    for (let attempt = 1; attempt <= PLAY_URI_MAX_ATTEMPTS; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, SWITCH_TO_QUEUE_SETTLE_MS));
+      ({ CurrentTransportState: lastState } = await device.AVTransportService.GetTransportInfo());
+      if (lastState === 'PLAYING' || lastState === 'TRANSITIONING') {
+        return;
+      }
+      if (attempt < PLAY_URI_MAX_ATTEMPTS) {
+        logger.debug(
+          `Sonos: playUri left ${device.name} ${lastState}, retrying (attempt ${attempt + 1}).`,
+        );
+        await device.AddUriToQueue(uri, 1, true);
+        await device.SwitchToQueue();
+        await device.Play();
+      }
+    }
+    // The playback-state feature (polled independently) will still reflect
+    // the true outcome; this is the only place that can explain why.
+    logger.warn(
+      `Sonos: content queued on ${device.name} but playback did not start (still ${lastState}).`,
     );
   }
 
