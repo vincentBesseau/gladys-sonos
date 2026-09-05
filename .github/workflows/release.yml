@@ -48,6 +48,11 @@ jobs:
         with:
           node-version: 24
 
+      # Needed to reformat the manifest with the project's own pinned
+      # Prettier version after jq's bump below.
+      - name: Install dependencies
+        run: npm ci
+
       - name: Bump version and update the manifest
         id: bump
         env:
@@ -70,6 +75,17 @@ jobs:
             '.version = $version | .docker_image = $image' \
             gladys-assistant-integration.json > "$tmp"
           mv "$tmp" gladys-assistant-integration.json
+
+          # jq reprints the whole file with its own style (it expands short
+          # arrays over several lines), which does not match .prettierrc.json
+          # and makes the `prettier --check .` gate of ci.yml fail on the very
+          # next push (a release's own push, via the default GITHUB_TOKEN,
+          # does not trigger other workflows itself, so this went unnoticed
+          # until an unrelated later commit finally ran CI on top of it).
+          # Reformat with the same Prettier range as the devDependency so
+          # both jobs agree on the output.
+          npx --yes "prettier@$(node -p "require('./package.json').devDependencies.prettier")" \
+            --write gladys-assistant-integration.json
 
           echo "version=${new_version}" >> "$GITHUB_OUTPUT"
 
