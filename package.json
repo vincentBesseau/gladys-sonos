@@ -1,6 +1,6 @@
 {
   "name": "gladys-sonos",
-  "version": "0.1.1",
+  "version": "1.0.0",
   "private": true,
   "description": "External integration to control Sonos speakers locally from Gladys Assistant, including VLAN setups, and play arbitrary content URIs.",
   "type": "module",
