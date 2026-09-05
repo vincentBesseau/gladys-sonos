@@ -20,6 +20,12 @@ depuis, typiquement, une scène Gladys.
   intégration qui liste des contenus (playlists, morceaux récents...) via une
   scène Gladys : lisez la valeur sélectionnée, écrivez-la sur « Lire une
   URI ».
+- **Parler sur une enceinte.** Chaque appareil dispose aussi d'une
+  fonctionnalité « Play Notification », pour l'action de scène « parler sur
+  une enceinte » : elle interrompt brièvement la lecture en cours pour
+  annoncer une URI (un fichier TTS généré, un son de notification...), puis
+  reprend — voir la section Limites pour la différence avec le service Sonos
+  natif.
 
 ## Configuration
 
@@ -56,3 +62,9 @@ liste le contenu à lancer (comme déclencheur), puis ajoutez une action qui
   nativement en charge cette source de contenu (ex. Spotify lié comme service
   dans l'app Sonos) — cette intégration ne gère pas cette liaison de compte,
   elle se contente d'envoyer l'URI sur le réseau local.
+- Une « Play Notification » dure toujours une durée fixe (~20s) avant de
+  reprendre ce qui jouait avant, même si l'annonce elle-même est plus courte.
+  Le service Sonos natif de Gladys peut reprendre dès que l'enceinte signale
+  la fin de l'annonce ; cette intégration tourne dans son propre conteneur,
+  que le réseau local d'une enceinte Sonos ne peut jamais atteindre pour
+  délivrer ce même signal, donc elle attend systématiquement la durée fixe.

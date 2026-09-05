@@ -17,6 +17,11 @@ track, a radio stream...) sent to it - typically from a Gladys scene.
   with an integration that lists content (playlists, recently played
   tracks...) through a Gladys scene: read the selected value, write it to
   "Play URI".
+- **Play Notification.** Each device also gets a "Play Notification" feature,
+  for a scene's "talk on a speaker" action: it briefly interrupts what is
+  playing to announce a URI (a generated TTS file, a notification sound...),
+  then reverts - see the Limitations section for how this differs from the
+  native Sonos service.
 
 ## Configuration
 
@@ -50,3 +55,10 @@ value.
   support that content source natively (e.g. Spotify linked as a service
   inside the Sonos app) - this integration does not manage that account link,
   it only sends the URI over the local network.
+- A "Play Notification" always runs for a fixed duration (~20s) before
+  reverting to whatever was playing before, even if the announcement itself
+  is shorter. Gladys' native Sonos service can revert as soon as the speaker
+  reports the announcement finished playing; this integration runs in its
+  own container, which a Sonos speaker's local network can never reach to
+  deliver that same signal, so it always waits out the fixed duration
+  instead.
