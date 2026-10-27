@@ -12,7 +12,16 @@
 import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { SonosClient, parseKnownIps } from './src/SonosClient.js';
 import { CONFIG_SCHEMA_KEYS, SSDP_SCAN_TIMEOUT_SECONDS } from './src/constants.js';
-import { buildDiscoveredDevices, setDeviceValue, pollDevice } from './src/devices.js';
+import {
+  buildDiscoveredDevices,
+  setDeviceValue,
+  pollDevice,
+  musicBrowse,
+  musicSearch,
+  musicPlay,
+  musicQueueGet,
+  musicQueuePlay,
+} from './src/devices.js';
 
 const gladys = new GladysIntegration();
 const client = new SonosClient();
@@ -122,6 +131,37 @@ gladys.onSetValue(async (device, feature, value) => {
 // --- Poll: Gladys asks for the current state of a device ---------------------
 gladys.onPoll(async (device) => {
   await pollDevice(gladys, client, device);
+});
+
+// --- Music player: on-demand catalog, search, queue and play -----------------
+// Declared in the manifest (`music`), answered on demand - nothing is stored.
+// The artwork bytes are served by the SDK's default handler, which fetches the
+// LAN album-art URL recorded by gladys.artworkKey (publishNowPlaying and
+// toMediaItem record them); no onMusicGetArtwork handler is registered because
+// Sonos serves images small enough as is.
+gladys.onMusicBrowse(async (device, params) => {
+  logger.debug(`onMusicBrowse <- parentId=${params.parentId}`);
+  return musicBrowse(gladys, client, device, params);
+});
+
+gladys.onMusicSearch(async (device, params) => {
+  logger.debug(`onMusicSearch <- "${params.query}"`);
+  return musicSearch(gladys, client, device, params);
+});
+
+gladys.onMusicPlay(async (device, media, mode) => {
+  logger.info(`onMusicPlay <- ${media.id} (${mode})`);
+  await musicPlay(client, device, media, mode);
+});
+
+gladys.onMusicQueueGet(async (device, params) => {
+  logger.debug('onMusicQueueGet');
+  return musicQueueGet(gladys, client, device, params);
+});
+
+gladys.onMusicQueuePlay(async (device, index) => {
+  logger.info(`onMusicQueuePlay <- index=${index}`);
+  await musicQueuePlay(client, device, index);
 });
 
 // --- Manifest action: refresh the Sonos household now -------------------------

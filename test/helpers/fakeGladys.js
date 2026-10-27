@@ -16,12 +16,16 @@ export function createFakeGladys() {
   const cameraImages = [];
   const transports = [];
   const connectionStatuses = [];
+  const nowPlaying = [];
+  const artworkUrls = new Map();
 
   return {
     published,
     cameraImages,
     transports,
     connectionStatuses,
+    nowPlaying,
+    artworkUrls,
 
     externalIds(type, platformId) {
       const device = `${type}:${platformId}`;
@@ -29,6 +33,19 @@ export function createFakeGladys() {
         device,
         feature: (key) => `${device}:${key}`,
       };
+    },
+
+    // Mirrors the real SDK: records the URL and returns a stable key for it.
+    artworkKey(url) {
+      const key = `art-${artworkUrls.size}`;
+      artworkUrls.set(key, url);
+      return key;
+    },
+
+    // Records each now-playing snapshot so tests can assert what was published.
+    async publishNowPlaying(deviceExternalId, snapshot) {
+      nowPlaying.push({ deviceExternalId, snapshot });
+      return { success: true, count: Object.keys(snapshot).length };
     },
 
     async publishState(featureExternalId, state) {

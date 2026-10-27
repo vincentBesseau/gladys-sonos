@@ -1,9 +1,24 @@
 // -----------------------------------------------------------------------------
 // Convert a Sonos device (from SonosClient.discover()) to a Gladys device.
+//
+// The speaker is published as a Gladys 5.3 "music player": the historical
+// commands (play/pause/next/previous/volume/play_notification) PLUS the
+// now-playing states of the `music` category (title, artist, album, artwork,
+// duration, position, shuffle, repeat, mute, playback_state), fed on each
+// poll through gladys.publishNowPlaying (see src/devices.js). The catalog,
+// the queue and search are declared in the manifest (`music`) and answered on
+// demand by the onMusic* handlers in index.js.
+//
+// Feature keys are the SDK's own `music` TYPE strings on purpose: that makes a
+// feature's external_id exactly `${deviceExternalId}:${type}`, which is the
+// default convention publishNowPlaying publishes to - no featureExternalIds
+// mapping to keep in sync.
 // -----------------------------------------------------------------------------
 
 import { DEVICE_FEATURE_CATEGORIES, DEVICE_FEATURE_TYPES } from '@gladysassistant/integration-sdk';
 import { POLL_FREQUENCY_IN_MS } from './constants.js';
+
+const { MUSIC } = DEVICE_FEATURE_TYPES;
 
 /**
  * Build a Gladys device from a Sonos device.
@@ -15,6 +30,51 @@ import { POLL_FREQUENCY_IN_MS } from './constants.js';
  */
 export function convertToGladysDevice(gladys, sonosDevice) {
   const ids = gladys.externalIds('sonos', sonosDevice.uuid);
+
+  // A momentary command (play, next...): nothing to read back, so neither
+  // read-only nor fed with feedback.
+  const command = (type, label, max = 1) => ({
+    name: `${sonosDevice.name} - ${label}`,
+    external_id: ids.feature(type),
+    category: DEVICE_FEATURE_CATEGORIES.MUSIC,
+    type,
+    min: 0,
+    max,
+    keep_history: false,
+    read_only: false,
+    has_feedback: false,
+  });
+
+  // A read-only now-playing state (title, duration...): published by the
+  // player, never written from Gladys.
+  const sensor = (type, label, max = 1) => ({
+    name: `${sonosDevice.name} - ${label}`,
+    external_id: ids.feature(type),
+    category: DEVICE_FEATURE_CATEGORIES.MUSIC,
+    type,
+    min: 0,
+    max,
+    keep_history: false,
+    read_only: true,
+    has_feedback: false,
+  });
+
+  // A writable now-playing state (volume, mute, position...): the player is
+  // the source of truth, so has_feedback is true - the core stores nothing on
+  // a write and shows the value the player confirms on the next poll (contract
+  // capabilities/music.md).
+  const writable = (type, label, max = 1) => ({
+    name: `${sonosDevice.name} - ${label}`,
+    external_id: ids.feature(type),
+    category: DEVICE_FEATURE_CATEGORIES.MUSIC,
+    type,
+    min: 0,
+    max,
+    keep_history: false,
+    read_only: false,
+    has_feedback: true,
+  });
+
   return {
     name: sonosDevice.name,
     external_id: ids.device,
@@ -30,70 +90,41 @@ export function convertToGladysDevice(gladys, sonosDevice) {
     should_poll: true,
     poll_frequency: POLL_FREQUENCY_IN_MS,
     features: [
+      command(MUSIC.PLAY, 'Play'),
+      command(MUSIC.PAUSE, 'Pause'),
+      command(MUSIC.PREVIOUS, 'Previous'),
+      command(MUSIC.NEXT, 'Next'),
+      writable(MUSIC.VOLUME, 'Volume', 100),
+      writable(MUSIC.MUTE, 'Mute'),
+      // Relayed by the core as pause/play/stop on a write (0/1/2); reported as
+      // PAUSED 0, PLAYING 1, IDLE 2 or BUFFERING 3.
+      writable(MUSIC.PLAYBACK_STATE, 'Playback state', 3),
+      sensor(MUSIC.TITLE, 'Title'),
+      sensor(MUSIC.ARTIST, 'Artist'),
+      sensor(MUSIC.ALBUM, 'Album'),
+      // An image KEY served by the artwork proxy (publishNowPlaying derives it
+      // from the album-art URL), never a URL.
+      sensor(MUSIC.ARTWORK, 'Artwork'),
+      // Seconds. 0 duration = unknown or a live stream.
+      sensor(MUSIC.DURATION, 'Duration', 86400),
+      // Seconds; writing it seeks within the current track.
+      writable(MUSIC.POSITION, 'Position', 86400),
+      writable(MUSIC.SHUFFLE, 'Shuffle'),
+      // MUSIC_REPEAT_MODE: OFF 0, ALL 1, ONE 2.
+      writable(MUSIC.REPEAT, 'Repeat', 2),
       {
-        name: `${sonosDevice.name} - Play`,
-        external_id: ids.feature('play'),
+        name: `${sonosDevice.name} - Play Notification`,
+        external_id: ids.feature('play-notification'),
         category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.PLAY,
-        min: 0,
+        type: MUSIC.PLAY_NOTIFICATION,
+        // Matches Gladys' native Sonos service's own declaration for this
+        // feature: min/max carry no meaning for a URI value, 1/1 is its
+        // existing placeholder (same NOT NULL DB constraint noted on Play URI
+        // below, just a different arbitrary pair).
+        min: 1,
         max: 1,
         keep_history: false,
         read_only: false,
-        has_feedback: false,
-      },
-      {
-        name: `${sonosDevice.name} - Pause`,
-        external_id: ids.feature('pause'),
-        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.PAUSE,
-        min: 0,
-        max: 1,
-        keep_history: false,
-        read_only: false,
-        has_feedback: false,
-      },
-      {
-        name: `${sonosDevice.name} - Previous`,
-        external_id: ids.feature('previous'),
-        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.PREVIOUS,
-        min: 0,
-        max: 1,
-        keep_history: false,
-        read_only: false,
-        has_feedback: false,
-      },
-      {
-        name: `${sonosDevice.name} - Next`,
-        external_id: ids.feature('next'),
-        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.NEXT,
-        min: 0,
-        max: 1,
-        keep_history: false,
-        read_only: false,
-        has_feedback: false,
-      },
-      {
-        name: `${sonosDevice.name} - Volume`,
-        external_id: ids.feature('volume'),
-        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.VOLUME,
-        min: 0,
-        max: 100,
-        keep_history: false,
-        read_only: false,
-        has_feedback: false,
-      },
-      {
-        name: `${sonosDevice.name} - Playback state`,
-        external_id: ids.feature('playback-state'),
-        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.PLAYBACK_STATE,
-        min: 0,
-        max: 1,
-        keep_history: false,
-        read_only: true,
         has_feedback: false,
       },
       {
@@ -107,32 +138,6 @@ export function convertToGladysDevice(gladys, sonosDevice) {
         min: 0,
         max: 1,
         read_only: false,
-        has_feedback: false,
-        keep_history: false,
-      },
-      {
-        name: `${sonosDevice.name} - Play Notification`,
-        external_id: ids.feature('play-notification'),
-        category: DEVICE_FEATURE_CATEGORIES.MUSIC,
-        type: DEVICE_FEATURE_TYPES.MUSIC.PLAY_NOTIFICATION,
-        // Matches Gladys' native Sonos service's own declaration for this
-        // feature: min/max carry no meaning for a URI value, 1/1 is its
-        // existing placeholder (same NOT NULL DB constraint noted on Play URI
-        // above, just a different arbitrary pair).
-        min: 1,
-        max: 1,
-        keep_history: false,
-        read_only: false,
-        has_feedback: false,
-      },
-      {
-        name: `${sonosDevice.name} - Now playing`,
-        external_id: ids.feature('now-playing'),
-        category: DEVICE_FEATURE_CATEGORIES.TEXT,
-        type: DEVICE_FEATURE_TYPES.TEXT.TEXT,
-        min: 0,
-        max: 1,
-        read_only: true,
         has_feedback: false,
         keep_history: false,
       },

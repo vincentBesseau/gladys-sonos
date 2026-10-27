@@ -1,8 +1,27 @@
 # Sonos
 
-Control your Sonos speakers directly over your local network: play, pause,
-previous/next track, volume, and play any content URI (a Spotify playlist or
-track, a radio stream...) sent to it - typically from a Gladys scene.
+Control your Sonos speakers directly over your local network, as a full
+Gladys 5.3 **music player**: play, pause, previous/next, volume, mute, seek,
+shuffle and repeat, with the now-playing title, artist, album and cover art on
+the dashboard - plus browsing your Sonos favorites and playlists, a queue, and
+playing any content URI sent from a scene.
+
+## Music player (Gladys 5.3)
+
+Each speaker is published with the music category's now-playing states - the
+player widget shows the **cover art**, the **progress bar**, the current
+**title/artist/album**, and the shuffle/repeat/mute state. The player's
+**catalog** lists your Sonos favorites, Sonos playlists and radio stations; its
+**queue** can be viewed and jumped into; and its **search** box matches your
+favorites and playlists by name. The scene action _"play a playlist/media"_
+starts any catalog item on the speaker (replace, play next, or append).
+
+> **After upgrading from 1.1.0, re-scan** (or delete and re-add the speaker) so
+> Gladys picks up the new music features.
+
+Local search note: Sonos has no cross-service text search over the local
+network, so search here matches the titles of your favorites and Sonos
+playlists rather than every track of every streaming service.
 
 ## Why this integration, alongside Gladys' native Sonos service
 
