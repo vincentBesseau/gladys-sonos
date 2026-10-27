@@ -196,6 +196,23 @@ function looksLikeUri(id) {
 }
 
 /**
+ * Whether a transport URI is a LIVE STREAM (a radio, a broadcast): it must be
+ * set as the transport source directly (SetAVTransportURI), never enqueued -
+ * AddUriToQueue on a stream hangs the speaker (observed live on an
+ * `x-sonosapi-stream` radio favorite: the enqueue sequence timed out). Queue
+ * items (tracks, albums, playlists, cloud containers) take the enqueue path.
+ * @param {string} uri - The transport URI.
+ * @returns {boolean} True for a live stream.
+ * @example
+ * isStreamUri('x-sonosapi-stream:s2339?sid=333'); // true
+ */
+export function isStreamUri(uri) {
+  return /^(x-sonosapi-stream|x-sonosapi-radio|x-sonosapi-hls|x-rincon-mp3radio|x-rincon-stream|mp3radio|hls-radio|pndrradio):/i.test(
+    String(uri || ''),
+  );
+}
+
+/**
  * Turn a parsed @svrooij/sonos Track into the raw catalog item the music
  * handlers map to a MediaItem (the artwork key is added in src/devices.js,
  * where the Gladys SDK instance lives). A container keeps its ObjectID as id
@@ -740,11 +757,38 @@ export class SonosClient {
   }
 
   /**
+   * Set a live stream (a radio) as the transport source and play it. A stream
+   * is NOT a queue item: it is pointed at directly with SetAVTransportURI
+   * (@svrooij/sonos guesses its metadata from the URI), then Play - the
+   * enqueue path hangs on a stream (see isStreamUri).
+   * @param {string} uuid - The Sonos device uuid.
+   * @param {string} uri - The stream transport URI.
+   * @returns {Promise<void>} Resolves once the command is dispatched.
+   */
+  async playStream(uuid, uri) {
+    const device = this.freshDeviceFor(uuid);
+    try {
+      await withTimeout(
+        (async () => {
+          await device.SetAVTransportURI(uri);
+          await device.Play();
+        })(),
+        SONOS_COMMAND_TIMEOUT_MS,
+      );
+    } catch (e) {
+      throw new Error(`Sonos speaker "${device.name || uuid}" did not respond: ${e.message}`, {
+        cause: e,
+      });
+    }
+  }
+
+  /**
    * Play a catalog MediaItem by id (a scene's "play a playlist" action, a
-   * click in the player). `replace` clears the queue and starts the content
-   * now (reusing playUri's enqueue+switch+play sequence, the only one that
-   * survives a cloud-service container - see playUri); `next`/`append` only
-   * add it to the queue.
+   * click in the player). A live stream (radio) is set as the transport
+   * source directly (see playStream). Otherwise `replace` clears the queue and
+   * starts the content now (reusing playUri's enqueue+switch+play sequence,
+   * the only one that survives a cloud-service container - see playUri);
+   * `next`/`append` only add it to the queue.
    * @param {string} uuid - The Sonos device uuid.
    * @param {string} id - The MediaItem id (a URI or a ContentDirectory ObjectID).
    * @param {string} [mode] - replace | next | append.
@@ -752,6 +796,11 @@ export class SonosClient {
    */
   async playMedia(uuid, id, mode = 'replace') {
     const uri = await this.resolveToUri(uuid, id);
+    // A live stream can only be played now, never queued.
+    if (isStreamUri(uri)) {
+      await this.playStream(uuid, uri);
+      return;
+    }
     if (mode === 'next' || mode === 'append') {
       await this.runCommand(uuid, (device) => device.AddUriToQueue(uri, 0, mode === 'next'));
       return;

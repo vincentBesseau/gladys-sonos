@@ -9,6 +9,7 @@ import {
   absoluteArtworkUrl,
   upnpClassToMediaType,
   mapTrackToItem,
+  isStreamUri,
   SonosClient,
 } from '../src/SonosClient.js';
 
@@ -123,6 +124,15 @@ test('mapTrackToItem keeps a container ObjectID as id and a leaf URI as id', () 
   assert.equal(track.id, 'x-sonos-http:track.mp3'); // leaf -> playable URI
   assert.equal(track.browsable, false);
   assert.equal(track.duration, 320);
+});
+
+test('isStreamUri flags radio/broadcast URIs, not queue items', () => {
+  assert.equal(isStreamUri('x-sonosapi-stream:s2339?sid=333'), true);
+  assert.equal(isStreamUri('x-rincon-mp3radio://http://stream'), true);
+  assert.equal(isStreamUri('x-rincon-cpcontainer:1004206cspotify:album'), false);
+  assert.equal(isStreamUri('x-rincon-playlist:RINCON_1#SQ:0'), false);
+  assert.equal(isStreamUri('x-sonos-http:track.mp3'), false);
+  assert.equal(isStreamUri(''), false);
 });
 
 test('freshDeviceFor throws for a uuid not seen in the last discovery', () => {
