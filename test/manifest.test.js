@@ -48,3 +48,17 @@ test('declaring catalog categories requires Gladys >= 4.86.0', () => {
 test('this integration declares no cloud transport (LAN-only control)', () => {
   assert.deepEqual(manifest.transports, ['local']);
 });
+
+test('declaring a music player requires Gladys >= 5.3.0', () => {
+  // Every operation declared here is answered by an onMusic* handler in
+  // index.js (browse/search/queue/play).
+  assert.ok(manifest.music, 'manifest must declare a music block');
+  for (const flag of ['browse', 'search', 'queue', 'append']) {
+    assert.equal(typeof manifest.music[flag], 'boolean', `music.${flag} must be a boolean`);
+  }
+  const [, major, minor] = manifest.gladys_version.match(/>=\s*(\d+)\.(\d+)\.\d+/).map(Number);
+  assert.ok(
+    major > 5 || (major === 5 && minor >= 3),
+    `music requires gladys_version >= 5.3.0, got "${manifest.gladys_version}"`,
+  );
+});

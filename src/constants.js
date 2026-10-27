@@ -2,6 +2,8 @@
 // Sonos integration constants.
 // -----------------------------------------------------------------------------
 
+import { DEVICE_POLL_FREQUENCIES } from '@gladysassistant/integration-sdk';
+
 // Device type used to build the external ids: `ext:<selector>:sonos:<uuid>`.
 export const DEVICE_TYPE = 'sonos';
 
@@ -59,18 +61,59 @@ export const PLAY_URI_MAX_ATTEMPTS = 2;
 export const PLAY_URI_TIMEOUT_MS = PLAY_URI_MAX_ATTEMPTS * (SWITCH_TO_QUEUE_SETTLE_MS + 5 * 1000);
 
 // How often the poll-driven state (playback state, volume) is refreshed.
-export const POLL_FREQUENCY_IN_MS = 15 * 1000;
+// Must be one of the host's accepted DEVICE_POLL_FREQUENCIES (1s, 2s, 10s,
+// 15s, 30s, 1min) or publishDiscoveredDevices is rejected (400); 15s keeps the
+// now-playing position close to real time without hammering the speakers.
+export const POLL_FREQUENCY_IN_MS = DEVICE_POLL_FREQUENCIES.EVERY_15_SECONDS;
 
-// Gladys MUSIC playback-state values (mirror of the core's MUSIC_PLAYBACK_STATE).
-export const MUSIC_PLAYBACK_STATE = {
-  PAUSED: 0,
+// Map a @svrooij/sonos AVTransport state to the core's MUSIC_PLAYBACK_STATE
+// (imported from the SDK: PAUSED 0, PLAYING 1, IDLE 2, BUFFERING 3). Anything
+// unmapped (NO_MEDIA_PRESENT, STOPPED on some firmwares...) is reported IDLE.
+export const TRANSPORT_STATE_TO_PLAYBACK = {
   PLAYING: 1,
+  TRANSITIONING: 3,
+  PAUSED_PLAYBACK: 0,
+  STOPPED: 2,
+  NO_MEDIA_PRESENT: 2,
 };
 
-// @svrooij/sonos TransportState values that count as "playing" for the
-// playback-state feature; everything else (STOPPED, PAUSED_PLAYBACK,
-// TRANSITIONING...) is reported as paused.
-export const PLAYING_TRANSPORT_STATES = ['PLAYING'];
+// Sonos AVTransport PlayMode <-> (shuffle, repeat) of the MUSIC category.
+// repeat uses the core's MUSIC_REPEAT_MODE (OFF 0, ALL 1, ONE 2). Sonos'
+// "SHUFFLE" means shuffle + repeat-all, "SHUFFLE_NOREPEAT" shuffle only.
+export const PLAY_MODE_TO_STATE = {
+  NORMAL: { shuffle: 0, repeat: 0 },
+  REPEAT_ALL: { shuffle: 0, repeat: 1 },
+  REPEAT_ONE: { shuffle: 0, repeat: 2 },
+  SHUFFLE_NOREPEAT: { shuffle: 1, repeat: 0 },
+  SHUFFLE: { shuffle: 1, repeat: 1 },
+  SHUFFLE_REPEAT_ONE: { shuffle: 1, repeat: 2 },
+};
+
+// (shuffle 0/1, repeat 0/1/2) -> the Sonos PlayMode to set. Keyed
+// `${shuffle}:${repeat}` so a single write recomputes the whole mode from the
+// other axis's last known value (Sonos has no independent shuffle/repeat set).
+export const STATE_TO_PLAY_MODE = {
+  '0:0': 'NORMAL',
+  '0:1': 'REPEAT_ALL',
+  '0:2': 'REPEAT_ONE',
+  '1:0': 'SHUFFLE_NOREPEAT',
+  '1:1': 'SHUFFLE',
+  '1:2': 'SHUFFLE_REPEAT_ONE',
+};
+
+// Entry points shown at the root of the on-demand catalog (onMusicBrowse with
+// parentId === null). Each `id` is a Sonos ContentDirectory ObjectID browsed
+// for its children; these three are present on every household, with no music
+// library share required (unlike `A:` objects).
+export const CATALOG_ROOT = [
+  { id: 'FV:2', label: { en: 'Sonos favorites', fr: 'Favoris Sonos' } },
+  { id: 'SQ:', label: { en: 'Sonos playlists', fr: 'Playlists Sonos' } },
+  { id: 'R:0/0', label: { en: 'Radio stations', fr: 'Radios' } },
+];
+
+// Largest page @svrooij/sonos' ContentDirectory Browse returns in one call,
+// and the ceiling the core keeps per music answer anyway (100 MediaItems).
+export const MUSIC_BROWSE_PAGE_SIZE = 100;
 
 // Play Notification: matches Gladys' native Sonos service's own hardcoded
 // values (server/services/sonos/lib/sonos.setValue.js), for the same "talk

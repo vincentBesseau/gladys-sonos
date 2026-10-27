@@ -1,9 +1,32 @@
 # Sonos
 
-Contrôlez vos enceintes Sonos directement sur votre réseau local : lecture,
-pause, morceau précédent/suivant, volume, et lecture de n'importe quelle URI
-de contenu (une playlist ou un morceau Spotify, un flux radio...) envoyée
-depuis, typiquement, une scène Gladys.
+Contrôlez vos enceintes Sonos directement sur votre réseau local, comme un
+vrai **lecteur de musique** Gladys 5.3 : lecture, pause, précédent/suivant,
+volume, sourdine, avance (seek), lecture aléatoire et répétition, avec le
+titre, l'artiste, l'album et la pochette en cours sur le tableau de bord - plus
+la navigation dans vos favoris et playlists Sonos, une file d'attente, et la
+lecture de n'importe quelle URI de contenu envoyée depuis une scène.
+
+## Lecteur de musique (Gladys 5.3)
+
+Chaque enceinte est publiée avec les états « en cours de lecture » de la
+catégorie musique : le widget lecteur affiche la **pochette**, la **barre de
+progression**, le **titre/artiste/album** en cours, et l'état
+aléatoire/répétition/sourdine. Le **catalogue** du lecteur liste vos favoris
+Sonos, vos playlists Sonos et les radios ; sa **file d'attente** peut être
+consultée et parcourue ; et sa **recherche** filtre vos favoris et playlists
+par nom. L'action de scène _« lancer une playlist / un média »_ démarre
+n'importe quel élément du catalogue sur l'enceinte (remplacer, lire ensuite ou
+ajouter à la file).
+
+> **Après une mise à jour depuis la 1.1.0, relancez un scan** (ou supprimez
+> puis réajoutez l'enceinte) pour que Gladys prenne en compte les nouvelles
+> fonctions musique.
+
+Note sur la recherche locale : Sonos n'offre pas de recherche texte inter-
+services sur le réseau local ; la recherche porte donc sur les titres de vos
+favoris et playlists Sonos, pas sur chaque morceau de chaque service de
+streaming.
 
 ## Pourquoi cette intégration, en plus du service Sonos natif de Gladys
 
