@@ -585,7 +585,7 @@ export class SonosClient {
    */
   async browse(uuid, objectId, offset = 0, limit = MUSIC_BROWSE_PAGE_SIZE) {
     return this.runCommand(uuid, async (device) => {
-      const response = await device.ContentDirectoryService.Browse({
+      const response = await device.ContentDirectoryService.BrowseParsed({
         ObjectID: objectId,
         BrowseFlag: 'BrowseDirectChildren',
         Filter: '*',
@@ -660,7 +660,7 @@ export class SonosClient {
   async getQueue(uuid, offset = 0, limit = MUSIC_BROWSE_PAGE_SIZE) {
     return this.runCommand(uuid, async (device) => {
       const [response, positionInfo] = await Promise.all([
-        device.ContentDirectoryService.Browse({
+        device.ContentDirectoryService.BrowseParsed({
           ObjectID: 'Q:0',
           BrowseFlag: 'BrowseDirectChildren',
           Filter: '*',
@@ -712,7 +712,7 @@ export class SonosClient {
       return id;
     }
     return this.runCommand(uuid, async (device) => {
-      const response = await device.ContentDirectoryService.Browse({
+      const response = await device.ContentDirectoryService.BrowseParsed({
         ObjectID: id,
         BrowseFlag: 'BrowseMetadata',
         Filter: '*',
