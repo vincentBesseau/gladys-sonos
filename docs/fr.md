@@ -81,8 +81,10 @@ liste le contenu à lancer (comme déclencheur), puis ajoutez une action qui
   si l'enceinte n'est pas joignable à l'adresse IP que Gladys a actuellement
   pour elle.
 - Pas de mise à jour temps réel (lecture/pause, volume) : l'état est
-  interrogé périodiquement, le tableau de bord peut donc avoir quelques
-  secondes de retard.
+  interrogé toutes les deux secondes environ, donc un changement fait depuis
+  l'app Sonos ou Spotify apparaît sur le tableau de bord en ~2 secondes. Une
+  action faite dans Gladys (lecture, pause, suivant, volume…) rafraîchit le
+  tableau de bord quasi instantanément.
 - La topologie des groupes/paires stéréo n'est lue qu'à chaque scan ; un
   appareil regroupé après le dernier scan est piloté directement plutôt que
   via le coordinateur de son groupe.

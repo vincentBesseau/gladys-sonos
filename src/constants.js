@@ -68,11 +68,23 @@ export const PLAY_URI_MAX_ATTEMPTS = 2;
 // play + the settle wait), so a legitimate retry is never cut short.
 export const PLAY_URI_TIMEOUT_MS = PLAY_URI_MAX_ATTEMPTS * (SWITCH_TO_QUEUE_SETTLE_MS + 5 * 1000);
 
-// How often the poll-driven state (playback state, volume) is refreshed.
-// Must be one of the host's accepted DEVICE_POLL_FREQUENCIES (1s, 2s, 10s,
-// 15s, 30s, 1min) or publishDiscoveredDevices is rejected (400); 15s keeps the
-// now-playing position close to real time without hammering the speakers.
-export const POLL_FREQUENCY_IN_MS = DEVICE_POLL_FREQUENCIES.EVERY_15_SECONDS;
+// How often the poll-driven state is refreshed. Must be one of the host's
+// accepted DEVICE_POLL_FREQUENCIES (1s, 2s, 10s, 15s, 30s, 1min) or
+// publishDiscoveredDevices is rejected (400). 2s keeps the dashboard close to
+// real time for changes made outside Gladys (the Sonos/Spotify app, a grouped
+// room): publishNowPlaying diffs every snapshot and emits only what changed
+// (the position only on a seek or a track change), so this stays well under the
+// host's 300 states/min budget. To keep the per-poll load on the speaker low,
+// each 2s poll reads only the two fast, often-changing calls (GetTransportInfo
+// + GetPositionInfo, see SonosClient.getPlaybackState); the slower-changing
+// volume/mute/play-mode are read once every FULL_STATE_EVERY_N_POLLS.
+export const POLL_FREQUENCY_IN_MS = DEVICE_POLL_FREQUENCIES.EVERY_2_SECONDS;
+
+// One poll in N also reads the control values (volume, mute, shuffle, repeat)
+// via SonosClient.getControlState - they change rarely and a command already
+// triggers an immediate refresh (index.js refreshSoon), so ~10s (5 x 2s) is
+// plenty to catch a change made from another controller.
+export const FULL_STATE_EVERY_N_POLLS = 5;
 
 // Map a @svrooij/sonos AVTransport state to the core's MUSIC_PLAYBACK_STATE
 // (imported from the SDK: PAUSED 0, PLAYING 1, IDLE 2, BUFFERING 3). Anything

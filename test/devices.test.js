@@ -201,12 +201,8 @@ test('setDeviceValue dispatches the "Play Notification" feature to playNotificat
 
 // --- pollDevice ---------------------------------------------------------------
 
-const fullState = {
+const playbackPart = {
   transportState: 'PLAYING',
-  volume: 37,
-  mute: 0,
-  shuffle: 1,
-  repeat: 1,
   title: "L'aventurier",
   artist: 'Indochine',
   album: 'Le Péril Jaune',
@@ -214,25 +210,92 @@ const fullState = {
   duration: 232,
   position: 42,
 };
+const controlPart = { volume: 37, mute: 0, shuffle: 1, repeat: 1 };
 
-test('pollDevice publishes the now-playing snapshot through publishNowPlaying', async () => {
+// A client whose state is split into the fast playback read and the slower
+// control read, counting how often each is called (to assert the cadence).
+function fakeStateClient(overrides = {}) {
+  const counts = { playback: 0, control: 0 };
+  return {
+    counts,
+    getPlaybackState: async () => {
+      counts.playback += 1;
+      return { ...playbackPart };
+    },
+    getControlState: async () => {
+      counts.control += 1;
+      return { ...controlPart };
+    },
+    ...overrides,
+  };
+}
+
+// pollDevice keeps a module-level per-uuid counter, so each test uses its own
+// uuid to stay independent of the others' call order.
+const deviceFor = (uuid) => ({ external_id: `ext:ext-dev-sonos:sonos:${uuid}`, name: uuid });
+
+test('pollDevice publishes the full snapshot (playback + control) on the first poll', async () => {
   const gladys = createFakeGladys();
-  const client = { getState: async () => ({ ...fullState }) };
-  const device = { external_id: 'ext:ext-dev-sonos:sonos:RINCON_1', name: 'Salon' };
+  const client = fakeStateClient();
 
-  await pollDevice(gladys, client, device);
+  await pollDevice(gladys, client, deviceFor('RINCON_FIRST'));
 
   assert.equal(gladys.nowPlaying.length, 1);
   const { deviceExternalId, snapshot } = gladys.nowPlaying[0];
-  assert.equal(deviceExternalId, 'sonos:RINCON_1');
+  assert.equal(deviceExternalId, 'sonos:RINCON_FIRST');
   assert.equal(snapshot.playback_state, MUSIC_PLAYBACK_STATE.PLAYING);
-  assert.equal(snapshot.volume, 37);
-  assert.equal(snapshot.shuffle, 1);
-  assert.equal(snapshot.repeat, 1);
   assert.equal(snapshot.title, "L'aventurier");
   assert.equal(snapshot.artwork_url, 'http://192.168.1.50:1400/getaa?u=x');
   assert.equal(snapshot.duration, 232);
   assert.equal(snapshot.position, 42);
+  // First poll reads control too.
+  assert.equal(snapshot.volume, 37);
+  assert.equal(snapshot.shuffle, 1);
+  assert.equal(snapshot.repeat, 1);
+  assert.deepEqual(client.counts, { playback: 1, control: 1 });
+});
+
+test('pollDevice reads control only once every FULL_STATE_EVERY_N_POLLS', async () => {
+  const gladys = createFakeGladys();
+  const client = fakeStateClient();
+  const device = deviceFor('RINCON_CADENCE');
+
+  for (let i = 0; i < 6; i += 1) {
+    await pollDevice(gladys, client, device);
+  }
+  // Playback every poll; control on poll #0 and poll #5 only.
+  assert.equal(client.counts.playback, 6);
+  assert.equal(client.counts.control, 2);
+  // In between, the published snapshot carries no control fields (left to the
+  // host's last known value).
+  assert.equal(gladys.nowPlaying[1].snapshot.volume, undefined);
+});
+
+test('pollDevice with { full: true } forces a control read', async () => {
+  const gladys = createFakeGladys();
+  const client = fakeStateClient();
+  const device = deviceFor('RINCON_FULL');
+
+  await pollDevice(gladys, client, device); // poll #0: control read
+  await pollDevice(gladys, client, device, { full: true }); // poll #1: forced
+  assert.equal(client.counts.control, 2);
+  assert.equal(gladys.nowPlaying[1].snapshot.volume, 37);
+});
+
+test('pollDevice still publishes playback when the control read fails', async () => {
+  const gladys = createFakeGladys();
+  const client = fakeStateClient({
+    getControlState: async () => {
+      throw new Error('control boom');
+    },
+  });
+
+  const ok = await pollDevice(gladys, client, deviceFor('RINCON_CTRLFAIL'));
+
+  assert.equal(ok, true);
+  assert.equal(gladys.nowPlaying.length, 1);
+  assert.equal(gladys.nowPlaying[0].snapshot.title, "L'aventurier");
+  assert.equal(gladys.nowPlaying[0].snapshot.volume, undefined);
 });
 
 test('pollDevice maps transport states to the playback enum', async () => {
@@ -245,24 +308,26 @@ test('pollDevice maps transport states to the playback enum', async () => {
   ];
   for (const [transportState, expected] of cases) {
     const gladys = createFakeGladys();
-    const client = { getState: async () => ({ ...fullState, transportState }) };
-    const device = { external_id: 'ext:ext-dev-sonos:sonos:RINCON_1', name: 'Salon' };
-    await pollDevice(gladys, client, device);
+    const client = {
+      getPlaybackState: async () => ({ ...playbackPart, transportState }),
+      getControlState: async () => ({ ...controlPart }),
+    };
+    await pollDevice(gladys, client, deviceFor(`RINCON_TS_${transportState}`));
     assert.equal(gladys.nowPlaying[0].snapshot.playback_state, expected, transportState);
   }
 });
 
-test('pollDevice swallows a client error instead of throwing', async () => {
+test('pollDevice returns false and publishes nothing when the speaker is unreachable', async () => {
   const gladys = createFakeGladys();
   const client = {
-    getState: async () => {
+    getPlaybackState: async () => {
       throw new Error('unreachable');
     },
   };
-  const device = { external_id: 'ext:ext-dev-sonos:sonos:RINCON_1', name: 'Salon' };
 
-  await pollDevice(gladys, client, device);
+  const ok = await pollDevice(gladys, client, deviceFor('RINCON_DOWN'));
 
+  assert.equal(ok, false);
   assert.equal(gladys.nowPlaying.length, 0);
 });
 
