@@ -283,6 +283,20 @@ test('musicBrowse at the root lists the household entry points as folders', asyn
   assert.ok(items.every((i) => i.type === 'folder' && i.browsable && !i.playable));
 });
 
+test('musicBrowse root labels follow the configured language, English by default', async () => {
+  const gladys = createFakeGladys();
+  const client = {};
+  const fr = await musicBrowse(gladys, client, device, { parentId: null }, 'fr');
+  assert.equal(fr.items[0].title, 'Favoris Sonos');
+  const de = await musicBrowse(gladys, client, device, { parentId: null }, 'de');
+  assert.equal(de.items[0].title, 'Sonos-Favoriten');
+  // Unknown / absent language falls back to English.
+  const unknown = await musicBrowse(gladys, client, device, { parentId: null }, 'zz');
+  assert.equal(unknown.items[0].title, 'Sonos favorites');
+  const none = await musicBrowse(gladys, client, device, { parentId: null });
+  assert.equal(none.items[0].title, 'Sonos favorites');
+});
+
 test('musicBrowse of a container maps items and proxies the artwork', async () => {
   const gladys = createFakeGladys();
   const client = {

@@ -213,16 +213,113 @@ export function isStreamUri(uri) {
 }
 
 /**
+ * Whether a parsed item is a Sonos favorite (FV:2 child). A favorite's own
+ * UPnP class is the generic `sonos-favorite`, so its id and type come from its
+ * target resource, not from the class.
+ * @param {object} track - A parsed Track.
+ * @returns {boolean} True for a favorite.
+ */
+function isFavoriteItem(track) {
+  return (
+    String(track.ItemId || '').startsWith('FV:2/') ||
+    String(track.UpnpClass || '').includes('sonos-favorite')
+  );
+}
+
+/**
+ * Best-effort MUSIC_MEDIA_TYPE from a transport URI, for favorites whose own
+ * class does not carry the real type: a cloud/local container is a playlist, a
+ * stream is a radio, anything else a track.
+ * @param {string} uri - The target transport URI.
+ * @returns {string} track | playlist | radio.
+ */
+export function mediaTypeFromUri(uri) {
+  const value = String(uri || '');
+  if (isStreamUri(value)) {
+    return 'radio';
+  }
+  if (
+    /^(x-rincon-cpcontainer|x-rincon-playlist|file:):/i.test(value) ||
+    value.startsWith('file:')
+  ) {
+    return 'playlist';
+  }
+  return 'track';
+}
+
+/**
+ * Minimal XML entity decode, for the few entities Sonos puts in a DIDL `res`
+ * URI. `&amp;` is decoded last so an already-decoded `&` is not re-processed.
+ * @param {string} value - The raw text.
+ * @returns {string} The decoded text.
+ */
+function decodeXmlEntities(value) {
+  return String(value || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
+/**
+ * Extract the playable resource URI and its verbatim DIDL metadata (`r:resMD`,
+ * which carries a music service's account token, e.g. `SA_RINCON…`) from a raw
+ * BrowseMetadata DIDL string. The `resMD` is returned EXACTLY as Sonos sent it
+ * (still entity-escaped): @svrooij/sonos inserts a STRING `*MetaData` value
+ * verbatim into the SOAP body (base-service `generateRequestBody`), so it must
+ * already be escaped; the `res` URI is decoded (the lib re-encodes it).
+ * @param {string} rawDidl - The raw `Result` of a BrowseMetadata call.
+ * @returns {{uri: string, metadata: string}} The resource and its metadata.
+ * @example
+ * extractResource('<DIDL-Lite><item><res>x-rincon-cpcontainer:…</res><r:resMD>&lt;DIDL-Lite…&gt;</r:resMD></item></DIDL-Lite>');
+ */
+export function extractResource(rawDidl) {
+  // A ContentDirectory Browse `Result` is entity-escaped as a whole, so decode
+  // it ONCE to reveal the real DIDL tags (`&lt;res&gt;` -> `<res>`). A
+  // music-service favorite's `r:resMD` is its OWN nested DIDL, escaped one more
+  // level, so after this single decode it stays escaped exactly once - which
+  // is the verbatim, SOAP-ready form @svrooij/sonos inserts for a `*MetaData`
+  // string. The `res` URI is decoded a second time to the plain URI (the
+  // library re-encodes it when sending).
+  const decoded = decodeXmlEntities(rawDidl);
+  const res = /<res[^>]*>([\s\S]*?)<\/res>/i.exec(decoded);
+  const resMd = /<r:resMD>([\s\S]*?)<\/r:resMD>/i.exec(decoded);
+  return {
+    uri: res ? decodeXmlEntities(res[1]).trim() : '',
+    metadata: resMd ? resMd[1] : '',
+  };
+}
+
+/**
  * Turn a parsed @svrooij/sonos Track into the raw catalog item the music
  * handlers map to a MediaItem (the artwork key is added in src/devices.js,
- * where the Gladys SDK instance lives). A container keeps its ObjectID as id
- * (so it can be browsed into); a leaf keeps its transport URI (so it can be
- * played without a metadata round trip).
+ * where the Gladys SDK instance lives).
+ *
+ * Id convention, so a play command can always reach the content:
+ * - a FAVORITE keeps its ObjectID (`FV:2/n`) as id - a music-service favorite
+ *   needs its `r:resMD` (service token) at play time, which only a
+ *   BrowseMetadata on that ObjectID returns (see resolveToPlayable); its type
+ *   is derived from its target URI;
+ * - a browsable container keeps its ObjectID (so it can be browsed into);
+ * - a plain leaf keeps its transport URI (played without a round trip).
  * @param {object} track - A Track from a Browse/queue result.
  * @param {string} host - The speaker host it was read from (for artwork URLs).
  * @returns {object} `{ id, type, title, subtitle, duration, artworkUrl, browsable, playable }`.
  */
 export function mapTrackToItem(track, host) {
+  if (isFavoriteItem(track)) {
+    return {
+      id: track.ItemId || track.TrackUri || '',
+      type: mediaTypeFromUri(track.TrackUri),
+      title: track.Title || '',
+      subtitle: track.Artist || track.Album || '',
+      duration: null,
+      artworkUrl: absoluteArtworkUrl(host, track.AlbumArtUri),
+      browsable: false,
+      playable: true,
+    };
+  }
   const container = isContainer(track.UpnpClass);
   const type = upnpClassToMediaType(track.UpnpClass);
   const id = container ? track.ItemId || track.TrackUri : track.TrackUri || track.ItemId;
@@ -281,29 +378,47 @@ export class SonosClient {
       const manager = new SonosManager();
       try {
         await withTimeout(init(manager), SONOS_INIT_TIMEOUT_MS);
+        for (const device of manager.Devices) {
+          foundByUuid.set(device.uuid, device);
+        }
       } catch (e) {
         logger.debug(`Sonos: discovery attempt failed: ${e.message}`);
-        return;
-      }
-      for (const device of manager.Devices) {
-        foundByUuid.set(device.uuid, device);
+      } finally {
+        // Initialize() subscribes to ZoneGroupTopology events (a UPnP
+        // listener + a 10-min renewal timer), which an external-integration
+        // container can never receive. Cancel it so repeated discoveries
+        // (startup, each reconnection, each scan) do not leak a subscription
+        // and a timer every time. (Events are also disabled globally via
+        // SONOS_DISABLE_EVENTS - see index.js - this is the belt-and-braces.)
+        try {
+          manager.CancelSubscription();
+        } catch (e) {
+          logger.debug(`Sonos: CancelSubscription failed: ${e.message}`);
+        }
       }
     };
 
-    // A plain single-LAN household needs no configuration: try discovery
-    // first, regardless of whether known IPs are also configured.
-    await tryManager((manager) => manager.InitializeWithDiscovery(10));
-
-    // Each known IP is tried as a topology seed too, even if discovery
-    // already found devices: it is the only way to reach a household split
-    // across a VLAN boundary discovery cannot cross. A handful of extra
-    // round trips on a background scan is a fine price for that coverage.
+    // No in-container SSDP discovery: an external-integration container is on
+    // a bridge network, so InitializeWithDiscovery's multicast never reaches
+    // the Sonos LAN - it only ever ends in the SONOS_INIT_TIMEOUT_MS timeout
+    // (8s wasted per discovery). Discovery is the mediated
+    // gladys.scanNetwork('ssdp') scan instead (its responder IPs arrive as
+    // ssdpIps); every known IP and every responder is seeded as a topology
+    // lookup, and one reachable member returns the whole household.
     for (const ip of seeds) {
       await tryManager((manager) => manager.InitializeFromDevice(ip, SONOS_PORT));
     }
 
-    this.devicesByUuid = foundByUuid;
-    return [...foundByUuid.values()].map((device) => ({
+    // MERGE into the cache, never replace it: a scan that reaches fewer
+    // speakers (or none - a reconnection before the mediated scan has any IP,
+    // a transient SSDP miss) must not wipe the working cache and leave every
+    // speaker answering "currently unreachable" until the next scan. A found
+    // device updates its entry (a new DHCP IP included); a missing one keeps
+    // its last-known instance.
+    for (const [uuid, device] of foundByUuid) {
+      this.devicesByUuid.set(uuid, device);
+    }
+    return [...this.devicesByUuid.values()].map((device) => ({
       uuid: device.uuid,
       name: device.name,
       host: device.host,
@@ -429,12 +544,17 @@ export class SonosClient {
    * non-overridable 5s command-ack window for a device command
    * (externalIntegration.sendCommand.js's COMMAND_TIMEOUT_MS) - a command
    * that is actually working must never look like a failed/timed-out one.
+   * A music-service FAVORITE additionally needs its DIDL metadata (`r:resMD`,
+   * the service account token) passed verbatim - without it Sonos refuses the
+   * cloud container, because @svrooij/sonos cannot guess a service token from
+   * an `x-rincon-cpcontainer:` URI (see resolveToPlayable / enqueueFront).
    * @param {string} uuid - The Sonos device uuid.
    * @param {string} uri - The content URI (e.g. `spotify:playlist:...`).
+   * @param {string} [metadata] - The DIDL metadata to enqueue verbatim, if any.
    * @returns {Promise<void>} Resolves once the content is queued and the
    *   transport pointed at it (not once playback is confirmed - see above).
    */
-  async playUri(uuid, uri) {
+  async playUri(uuid, uri, metadata = '') {
     // A FRESH, standalone SonosDevice for the actual command (see
     // freshDeviceFor's doc comment) - observed live: back-to-back
     // AddUriToQueue + SwitchToQueue + Play on the manager-tracked instance
@@ -445,7 +565,7 @@ export class SonosClient {
     try {
       await withTimeout(
         (async () => {
-          await device.AddUriToQueue(uri, 1, true);
+          await this.enqueueFront(device, uri, metadata);
           await device.SwitchToQueue();
           await device.Play();
         })(),
@@ -454,9 +574,36 @@ export class SonosClient {
     } catch (e) {
       throw new Error(`Sonos speaker "${device.name}" did not respond: ${e.message}`, { cause: e });
     }
-    withTimeout(this.confirmPlayUriStarted(device, uri), PLAY_URI_TIMEOUT_MS).catch((e) => {
-      logger.debug(`Sonos: playUri confirmation failed on ${device.name}: ${e.message}`);
-    });
+    withTimeout(this.confirmPlayUriStarted(device, uri, metadata), PLAY_URI_TIMEOUT_MS).catch(
+      (e) => {
+        logger.debug(`Sonos: playUri confirmation failed on ${device.name}: ${e.message}`);
+      },
+    );
+  }
+
+  /**
+   * Enqueue content at the front of the queue (play-next, position 1). With
+   * `metadata` (a favorite's verbatim `r:resMD`) the service-level
+   * AddURIToQueue is used so Sonos accepts a cloud container; without it the
+   * convenience call lets @svrooij/sonos guess the metadata from the URI shape
+   * (a plain `spotify:…`, a direct stream…).
+   * @param {object} device - The SonosDevice to enqueue on.
+   * @param {string} uri - The content URI.
+   * @param {string} [metadata] - The DIDL metadata, verbatim/escaped.
+   * @returns {Promise<void>} Resolves once enqueued.
+   */
+  async enqueueFront(device, uri, metadata = '') {
+    if (metadata) {
+      await device.AVTransportService.AddURIToQueue({
+        InstanceID: 0,
+        EnqueuedURI: uri,
+        EnqueuedURIMetaData: metadata,
+        DesiredFirstTrackNumberEnqueued: 1,
+        EnqueueAsNext: true,
+      });
+    } else {
+      await device.AddUriToQueue(uri, 1, true);
+    }
   }
 
   /**
@@ -467,9 +614,10 @@ export class SonosClient {
    * try. Not awaited by playUri - see its doc comment for why.
    * @param {object} device - The fresh SonosDevice playUri already dispatched to.
    * @param {string} uri - The content URI, replayed on a retry.
+   * @param {string} [metadata] - The DIDL metadata replayed with the URI.
    * @returns {Promise<void>} Resolves once confirmed, or the attempt ceiling is hit.
    */
-  async confirmPlayUriStarted(device, uri) {
+  async confirmPlayUriStarted(device, uri, metadata = '') {
     let lastState = null;
     for (let attempt = 1; attempt <= PLAY_URI_MAX_ATTEMPTS; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, SWITCH_TO_QUEUE_SETTLE_MS));
@@ -481,7 +629,7 @@ export class SonosClient {
         logger.debug(
           `Sonos: playUri left ${device.name} ${lastState}, retrying (attempt ${attempt + 1}).`,
         );
-        await device.AddUriToQueue(uri, 1, true);
+        await this.enqueueFront(device, uri, metadata);
         await device.SwitchToQueue();
         await device.Play();
       }
@@ -676,6 +824,16 @@ export class SonosClient {
    */
   async getQueue(uuid, offset = 0, limit = MUSIC_BROWSE_PAGE_SIZE) {
     return this.runCommand(uuid, async (device) => {
+      // The Q:0 queue is only what is playing when the transport source IS
+      // that queue (`x-rincon-queue:`). Started from Spotify Connect the
+      // source is `x-sonos-vli:`, from a line-in `x-rincon-stream:`, etc., and
+      // Q:0 then holds a stale, unrelated list whose "current track" would
+      // point at the wrong item. Report an empty queue in that case rather
+      // than a misleading one.
+      const mediaInfo = await device.Coordinator.AVTransportService.GetMediaInfo();
+      if (!String(mediaInfo.CurrentURI || '').startsWith('x-rincon-queue:')) {
+        return { items: [], currentIndex: null, total: 0 };
+      }
       const [response, positionInfo] = await Promise.all([
         device.ContentDirectoryService.BrowseParsed({
           ObjectID: 'Q:0',
@@ -715,21 +873,23 @@ export class SonosClient {
   }
 
   /**
-   * Resolve a MediaItem id to a playable Sonos transport URI: an id that is
-   * already a URI is returned as is, a ContentDirectory ObjectID (an album, a
-   * playlist chosen to play as a whole) is turned into its resource URI
-   * through a BrowseMetadata lookup.
+   * Resolve a MediaItem id to what Sonos needs to play it: `{ uri, metadata }`.
+   * An id that is already a transport URI is returned as is (no metadata - the
+   * library guesses it). A ContentDirectory ObjectID (a favorite, an album or
+   * a playlist chosen to play as a whole) is read with a RAW BrowseMetadata and
+   * its `res` + `r:resMD` extracted (BrowseParsed would drop the `r:resMD`, the
+   * service account token a music-service favorite needs - the whole point).
    * @param {string} uuid - The Sonos device uuid.
-   * @param {string} id - The MediaItem id.
-   * @returns {Promise<string>} The transport URI to enqueue.
+   * @param {string} id - The MediaItem id (a URI or an ObjectID).
+   * @returns {Promise<{uri: string, metadata: string}>} The resource and its DIDL metadata.
    * @throws {Error} When the object has no playable resource.
    */
-  async resolveToUri(uuid, id) {
+  async resolveToPlayable(uuid, id) {
     if (looksLikeUri(id)) {
-      return id;
+      return { uri: id, metadata: '' };
     }
     return this.runCommand(uuid, async (device) => {
-      const response = await device.ContentDirectoryService.BrowseParsed({
+      const response = await device.ContentDirectoryService.Browse({
         ObjectID: id,
         BrowseFlag: 'BrowseMetadata',
         Filter: '*',
@@ -737,11 +897,12 @@ export class SonosClient {
         RequestedCount: 1,
         SortCriteria: '',
       });
-      const [item] = Array.isArray(response.Result) ? response.Result : [];
-      if (!item || !item.TrackUri) {
+      const raw = typeof response.Result === 'string' ? response.Result : '';
+      const { uri, metadata } = extractResource(raw);
+      if (!uri) {
         throw new Error(`no playable resource for "${id}"`);
       }
-      return item.TrackUri;
+      return { uri, metadata };
     });
   }
 
@@ -758,19 +919,29 @@ export class SonosClient {
 
   /**
    * Set a live stream (a radio) as the transport source and play it. A stream
-   * is NOT a queue item: it is pointed at directly with SetAVTransportURI
-   * (@svrooij/sonos guesses its metadata from the URI), then Play - the
-   * enqueue path hangs on a stream (see isStreamUri).
+   * is NOT a queue item: it is pointed at directly with SetAVTransportURI, then
+   * Play - the enqueue path hangs on a stream (see isStreamUri). With
+   * `metadata` (a stream favorite's `r:resMD`) the service-level call sends it
+   * verbatim; without it the convenience call guesses from the URI.
    * @param {string} uuid - The Sonos device uuid.
    * @param {string} uri - The stream transport URI.
+   * @param {string} [metadata] - The DIDL metadata, verbatim/escaped.
    * @returns {Promise<void>} Resolves once the command is dispatched.
    */
-  async playStream(uuid, uri) {
+  async playStream(uuid, uri, metadata = '') {
     const device = this.freshDeviceFor(uuid);
     try {
       await withTimeout(
         (async () => {
-          await device.SetAVTransportURI(uri);
+          if (metadata) {
+            await device.AVTransportService.SetAVTransportURI({
+              InstanceID: 0,
+              CurrentURI: uri,
+              CurrentURIMetaData: metadata,
+            });
+          } else {
+            await device.SetAVTransportURI(uri);
+          }
           await device.Play();
         })(),
         SONOS_COMMAND_TIMEOUT_MS,
@@ -795,20 +966,30 @@ export class SonosClient {
    * @returns {Promise<void>} Resolves once the command is dispatched.
    */
   async playMedia(uuid, id, mode = 'replace') {
-    const uri = await this.resolveToUri(uuid, id);
+    const { uri, metadata } = await this.resolveToPlayable(uuid, id);
     // A live stream can only be played now, never queued.
     if (isStreamUri(uri)) {
-      await this.playStream(uuid, uri);
+      await this.playStream(uuid, uri, metadata);
       return;
     }
     if (mode === 'next' || mode === 'append') {
-      await this.runCommand(uuid, (device) => device.AddUriToQueue(uri, 0, mode === 'next'));
+      await this.runCommand(uuid, (device) =>
+        metadata
+          ? device.AVTransportService.AddURIToQueue({
+              InstanceID: 0,
+              EnqueuedURI: uri,
+              EnqueuedURIMetaData: metadata,
+              DesiredFirstTrackNumberEnqueued: 0,
+              EnqueueAsNext: mode === 'next',
+            })
+          : device.AddUriToQueue(uri, 0, mode === 'next'),
+      );
       return;
     }
     await this.clearQueue(uuid).catch((e) =>
       logger.debug(`Sonos: could not clear queue before replace: ${e.message}`),
     );
-    await this.playUri(uuid, uri);
+    await this.playUri(uuid, uri, metadata);
   }
 
   /**

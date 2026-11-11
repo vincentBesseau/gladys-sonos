@@ -10,6 +10,8 @@ import {
   upnpClassToMediaType,
   mapTrackToItem,
   isStreamUri,
+  mediaTypeFromUri,
+  extractResource,
   SonosClient,
 } from '../src/SonosClient.js';
 
@@ -124,6 +126,63 @@ test('mapTrackToItem keeps a container ObjectID as id and a leaf URI as id', () 
   assert.equal(track.id, 'x-sonos-http:track.mp3'); // leaf -> playable URI
   assert.equal(track.browsable, false);
   assert.equal(track.duration, 320);
+});
+
+test('mediaTypeFromUri derives a favorite type from its target URI', () => {
+  assert.equal(mediaTypeFromUri('x-rincon-cpcontainer:1004206cspotify:album:x'), 'playlist');
+  assert.equal(mediaTypeFromUri('x-rincon-playlist:RINCON_1#SQ:0'), 'playlist');
+  assert.equal(mediaTypeFromUri('x-sonosapi-stream:s2339?sid=333'), 'radio');
+  assert.equal(mediaTypeFromUri('x-rincon-mp3radio://stream'), 'radio');
+  assert.equal(mediaTypeFromUri('x-sonos-http:track.mp3'), 'track');
+  assert.equal(mediaTypeFromUri(''), 'track');
+});
+
+test('mapTrackToItem keeps a favorite as its ObjectID and types it from the URI', () => {
+  const fav = mapTrackToItem(
+    {
+      ItemId: 'FV:2/3',
+      ParentId: 'FV:2',
+      TrackUri: 'x-rincon-cpcontainer:1004206cspotify:album:x?sid=12&flags=8300&sn=1',
+      Title: 'Hypnotize',
+      Artist: 'Spotify',
+      AlbumArtUri: '/getaa?u=x',
+      UpnpClass: 'object.itemobject.item.sonos-favorite',
+    },
+    '192.168.1.50',
+  );
+  // The ObjectID is kept so play can re-read res + r:resMD (the service token).
+  assert.equal(fav.id, 'FV:2/3');
+  assert.equal(fav.type, 'playlist');
+  assert.equal(fav.browsable, false);
+  assert.equal(fav.playable, true);
+  assert.equal(fav.artworkUrl, 'http://192.168.1.50:1400/getaa?u=x');
+});
+
+test('extractResource decodes the res URI and keeps r:resMD verbatim (escaped)', () => {
+  // A real BrowseMetadata `Result` is entity-escaped as a WHOLE, and a
+  // favorite's r:resMD is escaped once more (its own nested DIDL) - so the raw
+  // string is double-escaped, exactly as Sonos returns it.
+  const didl =
+    '&lt;DIDL-Lite xmlns:r=&quot;urn:x&quot;&gt;' +
+    '&lt;item id=&quot;FV:2/4&quot;&gt;' +
+    '&lt;res protocolInfo=&quot;x-rincon-cpcontainer:*:*:*&quot;&gt;' +
+    'x-rincon-cpcontainer:1004206cspotify%3aalbum%3aX?sid=9&amp;amp;flags=8300&amp;amp;sn=1' +
+    '&lt;/res&gt;' +
+    '&lt;r:resMD&gt;&amp;lt;DIDL-Lite&amp;gt;&amp;lt;desc id=&amp;quot;cdudn&amp;quot;&amp;gt;' +
+    'SA_RINCON3079_X_#Svc3079-0-Token&amp;lt;/desc&amp;gt;&amp;lt;/DIDL-Lite&amp;gt;&lt;/r:resMD&gt;' +
+    '&lt;/item&gt;&lt;/DIDL-Lite&gt;';
+  const { uri, metadata } = extractResource(didl);
+  // res URI is decoded to the plain URI (the library re-encodes it when sending).
+  assert.equal(uri, 'x-rincon-cpcontainer:1004206cspotify%3aalbum%3aX?sid=9&flags=8300&sn=1');
+  // r:resMD stays escaped exactly once: the verbatim, SOAP-ready DIDL that
+  // carries the service token.
+  assert.ok(metadata.startsWith('&lt;DIDL-Lite&gt;'));
+  assert.ok(metadata.includes('SA_RINCON3079_X_#Svc3079-0-Token'));
+});
+
+test('extractResource returns empty strings when there is no resource', () => {
+  assert.deepEqual(extractResource('<DIDL-Lite></DIDL-Lite>'), { uri: '', metadata: '' });
+  assert.deepEqual(extractResource(''), { uri: '', metadata: '' });
 });
 
 test('isStreamUri flags radio/broadcast URIs, not queue items', () => {

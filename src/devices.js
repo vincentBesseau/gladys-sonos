@@ -15,7 +15,12 @@ import {
 } from '@gladysassistant/integration-sdk';
 
 import { convertToGladysDevice } from './convertToGladysDevice.js';
-import { TRANSPORT_STATE_TO_PLAYBACK, CATALOG_ROOT } from './constants.js';
+import {
+  TRANSPORT_STATE_TO_PLAYBACK,
+  CATALOG_ROOT,
+  SUPPORTED_CATALOG_LANGUAGES,
+  DEFAULT_CATALOG_LANGUAGE,
+} from './constants.js';
 
 const { MUSIC, TEXT } = DEVICE_FEATURE_TYPES;
 
@@ -132,7 +137,8 @@ export async function setDeviceValue(client, feature, value) {
  * @param {object} gladys - The Gladys SDK instance.
  * @param {SonosClient} client - The Sonos client.
  * @param {object} device - The Gladys device being polled (onPoll payload).
- * @returns {Promise<void>} Resolves once published.
+ * @returns {Promise<boolean>} True once published, false when the speaker was
+ *   unreachable (so the caller can schedule a rediscovery).
  * @example
  * await pollDevice(gladys, client, device);
  */
@@ -144,7 +150,7 @@ export async function pollDevice(gladys, client, device) {
     state = await client.getState(uuid);
   } catch (e) {
     logger.debug(`Sonos: unable to poll ${device.name}: ${e.message}`);
-    return;
+    return false;
   }
   const playbackState =
     TRANSPORT_STATE_TO_PLAYBACK[state.transportState] ?? MUSIC_PLAYBACK_STATE.IDLE;
@@ -161,6 +167,7 @@ export async function pollDevice(gladys, client, device) {
     duration: state.duration,
     position: state.position,
   });
+  return true;
 }
 
 /**
@@ -209,14 +216,18 @@ function isUsableItem(raw) {
  * @param {SonosClient} client - The Sonos client.
  * @param {object} device - The Gladys device (onMusicBrowse payload).
  * @param {object} params - `{ parentId, offset, limit }`.
+ * @param {string} [language] - The configured catalog language (root labels).
  * @returns {Promise<{items: Array, total: number}>} The page of MediaItems.
  */
-export async function musicBrowse(gladys, client, device, { parentId, offset, limit }) {
+export async function musicBrowse(gladys, client, device, { parentId, offset, limit }, language) {
   if (parentId === null || parentId === undefined) {
+    const lang = SUPPORTED_CATALOG_LANGUAGES.includes(language)
+      ? language
+      : DEFAULT_CATALOG_LANGUAGE;
     const items = CATALOG_ROOT.map((entry) => ({
       id: entry.id,
       type: 'folder',
-      title: entry.label.en,
+      title: entry.label[lang] || entry.label[DEFAULT_CATALOG_LANGUAGE],
       browsable: true,
       playable: false,
     }));
