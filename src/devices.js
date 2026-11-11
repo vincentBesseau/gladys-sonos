@@ -20,7 +20,13 @@ import {
   CATALOG_ROOT,
   SUPPORTED_CATALOG_LANGUAGES,
   DEFAULT_CATALOG_LANGUAGE,
+  FULL_STATE_EVERY_N_POLLS,
 } from './constants.js';
+
+// Per-device poll counter: the fast playback values are read every poll, the
+// slower control values (volume/mute/shuffle/repeat) only once every
+// FULL_STATE_EVERY_N_POLLS (see pollDevice).
+const pollCountByUuid = new Map();
 
 const { MUSIC, TEXT } = DEVICE_FEATURE_TYPES;
 
@@ -130,43 +136,66 @@ export async function setDeviceValue(client, feature, value) {
 }
 
 /**
- * Poll and publish the full now-playing snapshot of a device. Uses
- * publishNowPlaying, which diffs against the last snapshot and sends only the
- * changed values (the position only on a real change/seek), keeping well under
- * the host's 300 states/minute budget even with a 15s poll.
+ * Poll and publish the now-playing snapshot of a device. Uses publishNowPlaying,
+ * which diffs against the last snapshot and sends only the changed values (the
+ * position only on a real change/seek), keeping well under the host's 300
+ * states/minute budget even with the 2s poll.
+ *
+ * To keep the per-poll load on the speaker low, each poll reads only the fast,
+ * often-changing playback values (getPlaybackState, 2 SOAP calls); the
+ * slower-changing control values (volume/mute/shuffle/repeat, getControlState)
+ * are read only once every FULL_STATE_EVERY_N_POLLS. Pass `full: true` to read
+ * both in one poll (used for the immediate refresh after a command).
  * @param {object} gladys - The Gladys SDK instance.
  * @param {SonosClient} client - The Sonos client.
  * @param {object} device - The Gladys device being polled (onPoll payload).
+ * @param {object} [options] - `{ full }` - force reading the control values too.
  * @returns {Promise<boolean>} True once published, false when the speaker was
  *   unreachable (so the caller can schedule a rediscovery).
  * @example
  * await pollDevice(gladys, client, device);
  */
-export async function pollDevice(gladys, client, device) {
+export async function pollDevice(gladys, client, device, { full = false } = {}) {
   const uuid = sonosUuidFromDevice(device.external_id);
   const ids = gladys.externalIds('sonos', uuid);
-  let state;
+
+  let playback;
   try {
-    state = await client.getState(uuid);
+    playback = await client.getPlaybackState(uuid);
   } catch (e) {
     logger.debug(`Sonos: unable to poll ${device.name}: ${e.message}`);
     return false;
   }
-  const playbackState =
-    TRANSPORT_STATE_TO_PLAYBACK[state.transportState] ?? MUSIC_PLAYBACK_STATE.IDLE;
-  await gladys.publishNowPlaying(ids.device, {
-    playback_state: playbackState,
-    volume: state.volume,
-    mute: state.mute,
-    shuffle: state.shuffle,
-    repeat: state.repeat,
-    title: state.title,
-    artist: state.artist,
-    album: state.album,
-    artwork_url: state.albumArtUrl,
-    duration: state.duration,
-    position: state.position,
-  });
+
+  const count = pollCountByUuid.get(uuid) || 0;
+  pollCountByUuid.set(uuid, count + 1);
+  const snapshot = {
+    playback_state:
+      TRANSPORT_STATE_TO_PLAYBACK[playback.transportState] ?? MUSIC_PLAYBACK_STATE.IDLE,
+    title: playback.title,
+    artist: playback.artist,
+    album: playback.album,
+    artwork_url: playback.albumArtUrl,
+    duration: playback.duration,
+    position: playback.position,
+  };
+
+  // Control values on the first poll, then every FULL_STATE_EVERY_N_POLLS (and
+  // on a forced full refresh). A control-read failure is non-fatal: the
+  // playback snapshot is still published.
+  if (full || count % FULL_STATE_EVERY_N_POLLS === 0) {
+    try {
+      const control = await client.getControlState(uuid);
+      snapshot.volume = control.volume;
+      snapshot.mute = control.mute;
+      snapshot.shuffle = control.shuffle;
+      snapshot.repeat = control.repeat;
+    } catch (e) {
+      logger.debug(`Sonos: control read skipped for ${device.name}: ${e.message}`);
+    }
+  }
+
+  await gladys.publishNowPlaying(ids.device, snapshot);
   return true;
 }
 

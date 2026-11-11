@@ -12,8 +12,18 @@ import {
   isStreamUri,
   mediaTypeFromUri,
   extractResource,
+  parseFavoriteItems,
   SonosClient,
 } from '../src/SonosClient.js';
+
+// Escape a string once the way Sonos escapes a DIDL `Result` as a whole.
+function escapeOnce(value) {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
 
 test('parseKnownIps splits on commas, newlines and whitespace', () => {
   assert.deepEqual(parseKnownIps('192.168.10.21, 192.168.10.22\n192.168.10.23'), [
@@ -185,6 +195,58 @@ test('extractResource returns empty strings when there is no resource', () => {
   assert.deepEqual(extractResource(''), { uri: '', metadata: '' });
 });
 
+test('parseFavoriteItems types a favorite from its resMD class and falls back per item', () => {
+  // A Sonos Radio station: its res URI scheme is unknown to mediaTypeFromUri
+  // (would be "track"), but its r:resMD carries the real audioBroadcast class
+  // and an artwork the favorite itself lacks (issue #4.2).
+  const resMdPlain =
+    '<DIDL-Lite>' +
+    '<item id="r1"><upnp:class>object.item.audioItem.audioBroadcast</upnp:class>' +
+    '<upnp:albumArtURI>http://cdn.example/sonosradio.jpg</upnp:albumArtURI></item>' +
+    '</DIDL-Lite>';
+  // The decoded-once form (what a single decode of the raw Result reveals): the
+  // resMD inner DIDL is escaped exactly once inside it.
+  const decodedOnce =
+    '<DIDL-Lite xmlns:r="urn:x">' +
+    '<item id="FV:2/1" parentID="FV:2" restricted="true">' +
+    '<dc:title>Discover Sonos Radio</dc:title>' +
+    '<res protocolInfo="x-rincon-mp3radio:*:*:*">x-sonosapi-hls:discover?sid=303</res>' +
+    '<r:resMD>' +
+    escapeOnce(resMdPlain) +
+    '</r:resMD>' +
+    '</item>' +
+    '<item id="FV:2/2" parentID="FV:2" restricted="true">' +
+    '<dc:title>Road trip</dc:title>' +
+    '<res protocolInfo="x-rincon-cpcontainer:*:*:*">x-rincon-cpcontainer:1006spotifyplaylist</res>' +
+    '<upnp:albumArtURI>/getaa?u=rt</upnp:albumArtURI>' +
+    '</item>' +
+    '</DIDL-Lite>';
+  // The raw Result Sonos returns is that whole thing escaped once more.
+  const rawResult = escapeOnce(decodedOnce);
+
+  const items = parseFavoriteItems(rawResult, '192.168.1.50');
+  assert.equal(items.length, 2);
+
+  // #1: type + artwork come from the resMD, id stays the ObjectID.
+  assert.equal(items[0].id, 'FV:2/1');
+  assert.equal(items[0].title, 'Discover Sonos Radio');
+  assert.equal(items[0].type, 'radio');
+  assert.equal(items[0].artworkUrl, 'http://cdn.example/sonosradio.jpg');
+  assert.equal(items[0].browsable, false);
+  assert.equal(items[0].playable, true);
+
+  // #2: no resMD -> type from the URI (container -> playlist), artwork from the
+  // favorite's own relative albumArtURI made absolute.
+  assert.equal(items[1].id, 'FV:2/2');
+  assert.equal(items[1].type, 'playlist');
+  assert.equal(items[1].artworkUrl, 'http://192.168.1.50:1400/getaa?u=rt');
+});
+
+test('parseFavoriteItems returns an empty array when there are no items', () => {
+  assert.deepEqual(parseFavoriteItems('<DIDL-Lite></DIDL-Lite>', '192.168.1.50'), []);
+  assert.deepEqual(parseFavoriteItems('', '192.168.1.50'), []);
+});
+
 test('isStreamUri flags radio/broadcast URIs, not queue items', () => {
   assert.equal(isStreamUri('x-sonosapi-stream:s2339?sid=333'), true);
   assert.equal(isStreamUri('x-rincon-mp3radio://http://stream'), true);
@@ -218,6 +280,8 @@ test('playUri rejects for a uuid not seen in the last discovery', async () => {
 test('the new music commands reject for an unknown uuid', async () => {
   const client = new SonosClient();
   await assert.rejects(() => client.getState('RINCON_UNKNOWN'), /currently unreachable/);
+  await assert.rejects(() => client.getPlaybackState('RINCON_UNKNOWN'), /currently unreachable/);
+  await assert.rejects(() => client.getControlState('RINCON_UNKNOWN'), /currently unreachable/);
   await assert.rejects(() => client.setMute('RINCON_UNKNOWN', 1), /currently unreachable/);
   await assert.rejects(() => client.getQueue('RINCON_UNKNOWN'), /currently unreachable/);
   await assert.rejects(() => client.browse('RINCON_UNKNOWN', 'FV:2'), /currently unreachable/);

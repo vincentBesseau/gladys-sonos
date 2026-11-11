@@ -70,8 +70,10 @@ value.
 
 - Local network control only: no cloud account, nothing works if the speaker
   is unreachable at the IP address Gladys currently has for it.
-- No real-time push updates (playing/paused, volume): state is polled
-  periodically, so the dashboard can lag a few seconds behind reality.
+- No real-time push updates (playing/paused, volume): state is polled every
+  couple of seconds, so a change made from the Sonos or Spotify app shows up on
+  the dashboard within about 2 seconds. An action taken in Gladys (play, pause,
+  next, volume…) refreshes the dashboard almost instantly.
 - Group/stereo-pair topology is read once per scan; a device grouped after
   the last scan is controlled directly rather than through its group's
   coordinator.

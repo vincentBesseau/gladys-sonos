@@ -76,6 +76,33 @@ function scheduleRediscovery(reason) {
   );
 }
 
+// Delays (ms) of the immediate state refresh after a Gladys command: the first
+// catches the new value, the second a TRANSITIONING -> PLAYING settle. Not
+// awaited by the command (Gladys' 5s ack window), so an action taken in Gladys
+// feels instant instead of waiting for the next poll.
+const REFRESH_AFTER_COMMAND_MS = [1000, 3000];
+
+/**
+ * Trigger a couple of non-blocking full state refreshes shortly after a command,
+ * so the dashboard reflects the change without waiting for the next poll. A
+ * refresh that finds the speaker unreachable schedules a background rediscovery.
+ * @param {object} device - The Gladys device the command acted on.
+ * @returns {void}
+ */
+function refreshSoon(device) {
+  for (const delay of REFRESH_AFTER_COMMAND_MS) {
+    setTimeout(() => {
+      pollDevice(gladys, client, device, { full: true })
+        .then((ok) => {
+          if (!ok) {
+            scheduleRediscovery('post-command refresh, speaker unreachable');
+          }
+        })
+        .catch((e) => logger.debug(`Sonos: post-command refresh failed: ${e.message}`));
+    }, delay);
+  }
+}
+
 // The catalog root-folder language, refreshed from the config on every
 // discovery (startup, scan, config save) - onMusicBrowse gets no user locale.
 let catalogLanguage = DEFAULT_CATALOG_LANGUAGE;
@@ -177,6 +204,7 @@ gladys.onSetValue(async (device, feature, value) => {
   try {
     await setDeviceValue(client, feature, value);
     logger.debug(`onSetValue -> ${feature.external_id} succeeded`);
+    refreshSoon(device);
   } catch (e) {
     logger.error(`onSetValue -> ${feature.external_id} failed: ${e.message}`);
     if (isUnreachableError(e)) {
@@ -213,6 +241,7 @@ gladys.onMusicSearch(async (device, params) => {
 gladys.onMusicPlay(async (device, media, mode) => {
   logger.info(`onMusicPlay <- ${media.id} (${mode})`);
   await musicPlay(client, device, media, mode);
+  refreshSoon(device);
 });
 
 gladys.onMusicQueueGet(async (device, params) => {
@@ -223,6 +252,7 @@ gladys.onMusicQueueGet(async (device, params) => {
 gladys.onMusicQueuePlay(async (device, index) => {
   logger.info(`onMusicQueuePlay <- index=${index}`);
   await musicQueuePlay(client, device, index);
+  refreshSoon(device);
 });
 
 // --- Manifest action: refresh the Sonos household now -------------------------

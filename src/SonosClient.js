@@ -292,6 +292,76 @@ export function extractResource(rawDidl) {
 }
 
 /**
+ * Read the inner text of the first `<tag>…</tag>` in a (once-decoded) DIDL
+ * fragment, entity-decoded. Returns '' when absent.
+ * @param {string} xml - The DIDL fragment to search.
+ * @param {string} tag - The tag name (e.g. `dc:title`, `upnp:class`).
+ * @returns {string} The decoded inner text, or ''.
+ */
+function didlTagText(xml, tag) {
+  const escaped = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`<${escaped}[^>]*>([\\s\\S]*?)</${escaped}>`, 'i').exec(String(xml || ''));
+  return m ? decodeXmlEntities(m[1]).trim() : '';
+}
+
+/**
+ * Parse the RAW DIDL `Result` of a favorites (`FV:2`) BrowseDirectChildren into
+ * raw catalog items, deriving each favorite's real type and artwork from its
+ * `r:resMD` (the target's own DIDL). `BrowseParsed` drops `r:resMD`, so a Sonos
+ * Radio station or a service playlist would otherwise fall back to the generic
+ * `track` type with no cover (issue #4.2); the resMD carries the target's
+ * `upnp:class` and usually its `upnp:albumArtURI`.
+ *
+ * Each favorite keeps its ObjectID (`FV:2/n`) as id - play still resolves it
+ * through resolveToPlayable to recover the service token - so only the type and
+ * artwork improve here; browsable/playable are unchanged (mapTrackToItem).
+ * @param {string} rawResult - The raw, entity-escaped `Result` string.
+ * @param {string} host - The speaker host (for relative artwork URLs).
+ * @returns {Array<object>} Raw items `{ id, type, title, subtitle, duration,
+ *   artworkUrl, browsable, playable }`.
+ */
+export function parseFavoriteItems(rawResult, host) {
+  // The `Result` is entity-escaped as a whole; decode it ONCE to reveal the
+  // real `<item>` tags. Each item's `<r:resMD>` is its own nested DIDL escaped
+  // one more level, so after this single decode its inner tags stay escaped -
+  // which also means a nested `&lt;item&gt;` inside a resMD can never be
+  // mistaken for a top-level `<item>` here.
+  const decoded = decodeXmlEntities(rawResult);
+  const items = [];
+  const itemRe = /<item\b[^>]*\bid="([^"]*)"[^>]*>([\s\S]*?)<\/item>/gi;
+  let match;
+  while ((match = itemRe.exec(decoded)) !== null) {
+    const [, id, body] = match;
+    const title = didlTagText(body, 'dc:title');
+    const res = didlTagText(body, 'res');
+    // resMD inner DIDL is still escaped once after the single decode above;
+    // decode it once more to read the target's class and artwork.
+    const resMdRaw = /<r:resMD>([\s\S]*?)<\/r:resMD>/i.exec(body);
+    const resMd = resMdRaw ? decodeXmlEntities(resMdRaw[1]) : '';
+    const upnpClass = didlTagText(resMd, 'upnp:class');
+    const type = upnpClass ? upnpClassToMediaType(upnpClass) : mediaTypeFromUri(res);
+    // Prefer the favorite's own cover, fall back to the target's (resMD).
+    const art = didlTagText(body, 'upnp:albumArtURI') || didlTagText(resMd, 'upnp:albumArtURI');
+    const subtitle =
+      didlTagText(body, 'dc:creator') ||
+      didlTagText(resMd, 'dc:creator') ||
+      didlTagText(resMd, 'r:albumArtist') ||
+      didlTagText(resMd, 'upnp:album');
+    items.push({
+      id: id || res || '',
+      type,
+      title,
+      subtitle,
+      duration: null,
+      artworkUrl: absoluteArtworkUrl(host, art),
+      browsable: false,
+      playable: true,
+    });
+  }
+  return items;
+}
+
+/**
  * Turn a parsed @svrooij/sonos Track into the raw catalog item the music
  * handlers map to a MediaItem (the artwork key is added in src/devices.js,
  * where the Gladys SDK instance lives).
@@ -642,37 +712,28 @@ export class SonosClient {
   }
 
   /**
-   * Read the full now-playing snapshot of a device: transport state, volume,
-   * mute, shuffle/repeat (from the coordinator's PlayMode) and the current
-   * track's title/artist/album/artwork/duration/position. Playback-related
-   * values are read from the group coordinator (the speaker that actually
-   * drives the stream), volume/mute from the speaker itself (per-room).
+   * Read only the fast, often-changing now-playing values from the group
+   * coordinator (the speaker that actually drives the stream): two SOAP calls,
+   * GetTransportInfo + GetPositionInfo. This is what the 2s poll reads every
+   * time (see src/devices.js pollDevice) so a change made outside Gladys shows
+   * up within ~2s without hammering the speaker with the heavier control reads.
    * @param {string} uuid - The Sonos device uuid.
-   * @returns {Promise<object>} `{ transportState, volume, mute, shuffle, repeat,
-   *   title, artist, album, albumArtUrl, duration, position }`.
+   * @returns {Promise<object>} `{ transportState, title, artist, album,
+   *   albumArtUrl, duration, position }`.
    */
-  async getState(uuid) {
+  async getPlaybackState(uuid) {
     return this.runCommand(uuid, async (device) => {
       const coordinator = device.Coordinator;
-      const [transportInfo, volumeInfo, muteInfo, positionInfo, transportSettings] =
-        await Promise.all([
-          coordinator.AVTransportService.GetTransportInfo(),
-          device.RenderingControlService.GetVolume({ InstanceID: 0, Channel: 'Master' }),
-          device.RenderingControlService.GetMute({ InstanceID: 0, Channel: 'Master' }),
-          coordinator.AVTransportService.GetPositionInfo(),
-          coordinator.AVTransportService.GetTransportSettings(),
-        ]);
+      const [transportInfo, positionInfo] = await Promise.all([
+        coordinator.AVTransportService.GetTransportInfo(),
+        coordinator.AVTransportService.GetPositionInfo(),
+      ]);
       const meta =
         positionInfo.TrackMetaData && typeof positionInfo.TrackMetaData === 'object'
           ? positionInfo.TrackMetaData
           : {};
-      const mode = PLAY_MODE_TO_STATE[transportSettings.PlayMode] || { shuffle: 0, repeat: 0 };
       return {
         transportState: transportInfo.CurrentTransportState,
-        volume: volumeInfo.CurrentVolume,
-        mute: muteInfo.CurrentMute ? 1 : 0,
-        shuffle: mode.shuffle,
-        repeat: mode.repeat,
         title: meta.Title || '',
         artist: meta.Artist || '',
         album: meta.Album || '',
@@ -681,6 +742,48 @@ export class SonosClient {
         position: parseDurationToSeconds(positionInfo.RelTime),
       };
     });
+  }
+
+  /**
+   * Read the slower-changing control values: volume/mute (per-room, from the
+   * speaker itself) and shuffle/repeat (from the coordinator's PlayMode). Three
+   * SOAP calls, read only once every FULL_STATE_EVERY_N_POLLS polls and right
+   * after a command (they rarely change between polls).
+   * @param {string} uuid - The Sonos device uuid.
+   * @returns {Promise<object>} `{ volume, mute, shuffle, repeat }`.
+   */
+  async getControlState(uuid) {
+    return this.runCommand(uuid, async (device) => {
+      const [volumeInfo, muteInfo, transportSettings] = await Promise.all([
+        device.RenderingControlService.GetVolume({ InstanceID: 0, Channel: 'Master' }),
+        device.RenderingControlService.GetMute({ InstanceID: 0, Channel: 'Master' }),
+        device.Coordinator.AVTransportService.GetTransportSettings(),
+      ]);
+      const mode = PLAY_MODE_TO_STATE[transportSettings.PlayMode] || { shuffle: 0, repeat: 0 };
+      return {
+        volume: volumeInfo.CurrentVolume,
+        mute: muteInfo.CurrentMute ? 1 : 0,
+        shuffle: mode.shuffle,
+        repeat: mode.repeat,
+      };
+    });
+  }
+
+  /**
+   * Read the full now-playing snapshot (playback + control values). Used for
+   * the immediate refresh after a Gladys command (index.js refreshSoon), where
+   * one call that captures everything - including a volume or play-mode change -
+   * is simplest.
+   * @param {string} uuid - The Sonos device uuid.
+   * @returns {Promise<object>} `{ transportState, volume, mute, shuffle, repeat,
+   *   title, artist, album, albumArtUrl, duration, position }`.
+   */
+  async getState(uuid) {
+    const [playback, control] = await Promise.all([
+      this.getPlaybackState(uuid),
+      this.getControlState(uuid),
+    ]);
+    return { ...playback, ...control };
   }
 
   /**
@@ -750,14 +853,25 @@ export class SonosClient {
    */
   async browse(uuid, objectId, offset = 0, limit = MUSIC_BROWSE_PAGE_SIZE) {
     return this.runCommand(uuid, async (device) => {
-      const response = await device.ContentDirectoryService.BrowseParsed({
+      const request = {
         ObjectID: objectId,
         BrowseFlag: 'BrowseDirectChildren',
         Filter: '*',
         StartingIndex: offset,
         RequestedCount: limit,
         SortCriteria: '',
-      });
+      };
+      // Favorites (FV:2) need the RAW DIDL: BrowseParsed drops each favorite's
+      // r:resMD, which carries the target's real upnp:class and artwork (issue
+      // #4.2). One Browse for the whole page - no per-item BrowseMetadata.
+      if (String(objectId).startsWith('FV:2')) {
+        const raw = await device.ContentDirectoryService.Browse(request);
+        return {
+          items: parseFavoriteItems(raw.Result, device.host),
+          total: Number(raw.TotalMatches) || 0,
+        };
+      }
+      const response = await device.ContentDirectoryService.BrowseParsed(request);
       const tracks = Array.isArray(response.Result) ? response.Result : [];
       return {
         items: tracks.map((track) => mapTrackToItem(track, device.host)),
