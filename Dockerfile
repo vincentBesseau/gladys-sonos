@@ -26,6 +26,14 @@ COPY gladys-assistant-integration.json ./
 
 # The only writable location allowed at runtime.
 ENV NODE_ENV=production
+
+# Disable @svrooij/sonos' UPnP eventing: a bridge-network container cannot
+# receive a speaker's NOTIFY callbacks, so every SUBSCRIBE is dead weight (a
+# listener, an unreachable callback URL, a 10-min renewal timer). index.js
+# also sets these defaults in code for non-Docker runs.
+ENV SONOS_DISABLE_EVENTS=1
+ENV SONOS_DISABLE_LISTENER=1
+
 VOLUME ["/data"]
 
 # Run as an unprivileged user (already present in the node image).

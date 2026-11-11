@@ -52,6 +52,25 @@
         "en": "192.168.10.21",
         "fr": "192.168.10.21"
       }
+    },
+    {
+      "key": "catalog_language",
+      "type": "select",
+      "default": "en",
+      "label": {
+        "en": "Catalogue language",
+        "fr": "Langue du catalogue"
+      },
+      "description": {
+        "en": "Language of the music catalogue's root folders (Favorites, Playlists, Radios).",
+        "fr": "Langue des dossiers racine du catalogue musique (Favoris, Playlists, Radios)."
+      },
+      "options": [
+        { "value": "en", "label": { "en": "English", "fr": "Anglais" } },
+        { "value": "fr", "label": { "en": "French", "fr": "Français" } },
+        { "value": "de", "label": { "en": "German", "fr": "Allemand" } },
+        { "value": "es", "label": { "en": "Spanish", "fr": "Espagnol" } }
+      ]
     }
   ],
   "actions": [

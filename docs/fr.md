@@ -23,10 +23,15 @@ ajouter à la file).
 > puis réajoutez l'enceinte) pour que Gladys prenne en compte les nouvelles
 > fonctions musique.
 
-Note sur la recherche locale : Sonos n'offre pas de recherche texte inter-
-services sur le réseau local ; la recherche porte donc sur les titres de vos
-favoris et playlists Sonos, pas sur chaque morceau de chaque service de
-streaming.
+Catalogue & recherche : la navigation et la recherche couvrent uniquement vos
+**favoris Sonos** et vos **playlists Sonos** — Sonos n'expose aucun catalogue
+ni recherche inter-services sur le réseau local (cela nécessiterait les
+identifiants du service musical). Pour lancer du Spotify (ou tout service)
+depuis une scène ou la recherche, **ajoutez-le d'abord à vos favoris Sonos dans
+l'app Sonos** : il apparaît alors ici et se lit avec son jeton de service
+préservé. Pour une vraie recherche Spotify, associez une intégration Spotify
+Connect. Les noms des dossiers racine (Favoris / Playlists / Radios) suivent le
+réglage **Langue du catalogue** dans la configuration de l'intégration.
 
 ## Pourquoi cette intégration, en plus du service Sonos natif de Gladys
 

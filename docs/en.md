@@ -19,9 +19,14 @@ starts any catalog item on the speaker (replace, play next, or append).
 > **After upgrading from 1.1.0, re-scan** (or delete and re-add the speaker) so
 > Gladys picks up the new music features.
 
-Local search note: Sonos has no cross-service text search over the local
-network, so search here matches the titles of your favorites and Sonos
-playlists rather than every track of every streaming service.
+Catalog & search: browsing and search cover your **Sonos favorites** and
+**Sonos playlists** only - Sonos exposes no cross-service catalog or search
+over the local network (that would need a music service's own credentials). To
+play Spotify (or any service) from a scene or the search box, **add it to your
+Sonos favorites in the Sonos app** first; it then appears here and plays with
+its service token preserved. For full Spotify search, pair a Spotify Connect
+integration. The root folder names (Favorites / Playlists / Radios) follow the
+**Catalogue language** setting in the integration's configuration.
 
 ## Why this integration, alongside Gladys' native Sonos service
 

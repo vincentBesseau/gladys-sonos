@@ -22,7 +22,15 @@ export const CONFIG_SCHEMA_KEYS = {
   // discovery silently returns nothing (a live, unresolved issue as of this
   // integration's design - see docs/en.md for the report it is based on).
   KNOWN_IPS: 'known_ips',
+  // Language of the on-demand catalog's root folder labels (Favorites,
+  // Playlists, Radios): onMusicBrowse receives no user locale, so the user
+  // picks it. One of SUPPORTED_CATALOG_LANGUAGES, defaults to English.
+  CATALOG_LANGUAGE: 'catalog_language',
 };
+
+// Languages Gladys ships with, and the default when none is configured.
+export const SUPPORTED_CATALOG_LANGUAGES = ['en', 'fr', 'de', 'es'];
+export const DEFAULT_CATALOG_LANGUAGE = 'en';
 
 // How long a mediated SSDP scan listens for responses.
 export const SSDP_SCAN_TIMEOUT_SECONDS = 5;
@@ -106,9 +114,28 @@ export const STATE_TO_PLAY_MODE = {
 // for its children; these three are present on every household, with no music
 // library share required (unlike `A:` objects).
 export const CATALOG_ROOT = [
-  { id: 'FV:2', label: { en: 'Sonos favorites', fr: 'Favoris Sonos' } },
-  { id: 'SQ:', label: { en: 'Sonos playlists', fr: 'Playlists Sonos' } },
-  { id: 'R:0/0', label: { en: 'Radio stations', fr: 'Radios' } },
+  {
+    id: 'FV:2',
+    label: {
+      en: 'Sonos favorites',
+      fr: 'Favoris Sonos',
+      de: 'Sonos-Favoriten',
+      es: 'Favoritos de Sonos',
+    },
+  },
+  {
+    id: 'SQ:',
+    label: {
+      en: 'Sonos playlists',
+      fr: 'Playlists Sonos',
+      de: 'Sonos-Playlists',
+      es: 'Listas de Sonos',
+    },
+  },
+  {
+    id: 'R:0/0',
+    label: { en: 'Radio stations', fr: 'Radios', de: 'Radiosender', es: 'Emisoras de radio' },
+  },
 ];
 
 // Largest page @svrooij/sonos' ContentDirectory Browse returns in one call,

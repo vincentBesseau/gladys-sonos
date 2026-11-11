@@ -11,7 +11,11 @@
 
 import { GladysIntegration, logger } from '@gladysassistant/integration-sdk';
 import { SonosClient, parseKnownIps } from './src/SonosClient.js';
-import { CONFIG_SCHEMA_KEYS, SSDP_SCAN_TIMEOUT_SECONDS } from './src/constants.js';
+import {
+  CONFIG_SCHEMA_KEYS,
+  SSDP_SCAN_TIMEOUT_SECONDS,
+  DEFAULT_CATALOG_LANGUAGE,
+} from './src/constants.js';
 import {
   buildDiscoveredDevices,
   setDeviceValue,
@@ -23,15 +27,66 @@ import {
   musicQueuePlay,
 } from './src/devices.js';
 
+// Disable @svrooij/sonos' UPnP eventing entirely, before any discovery runs
+// (the library reads these at subscribe time). An external-integration
+// container is on a bridge network and can never receive a speaker's NOTIFY
+// callbacks, so every SUBSCRIBE is dead weight - a listener, a callback URL
+// the speakers cannot reach, and a 10-min renewal timer - and they leaked on
+// every discovery. Any defined value disables it; keep a user-set override.
+process.env.SONOS_DISABLE_EVENTS = process.env.SONOS_DISABLE_EVENTS ?? '1';
+process.env.SONOS_DISABLE_LISTENER = process.env.SONOS_DISABLE_LISTENER ?? '1';
+
 const gladys = new GladysIntegration();
 const client = new SonosClient();
 
+// Self-heal a stale speaker IP (a DHCP lease change): a command or poll
+// failure schedules ONE background rediscovery, debounced, so the next cycle
+// reaches the speaker at its new IP. Not awaited by the failing command -
+// Gladys' fixed 5s command-ack window forbids a synchronous rescan, and the
+// merged cache (SonosClient.discover) means the rescan never drops a speaker.
+let lastRediscoveryAt = 0;
+const REDISCOVERY_DEBOUNCE_MS = 30 * 1000;
+
 /**
- * Read the configured known IPs.
+ * Whether an error looks like the speaker being unreachable (a stale IP, a
+ * powered-off unit), the only kind worth a rediscovery.
+ * @param {Error} error - The caught error.
+ * @returns {boolean} True when a rediscovery might help.
+ */
+function isUnreachableError(error) {
+  return /unreachable|did not respond|timed out|EHOSTUNREACH|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|EHOSTDOWN/i.test(
+    error?.message || '',
+  );
+}
+
+/**
+ * Schedule a single debounced background rediscovery.
+ * @param {string} reason - Why a rediscovery was scheduled (for the log).
+ * @returns {void}
+ */
+function scheduleRediscovery(reason) {
+  const now = Date.now();
+  if (now - lastRediscoveryAt < REDISCOVERY_DEBOUNCE_MS) {
+    return;
+  }
+  lastRediscoveryAt = now;
+  logger.info(`Sonos: scheduling a background rediscovery (${reason})`);
+  discoverAndPublish().catch((e) =>
+    logger.error(`Sonos: background rediscovery failed: ${e.message}`),
+  );
+}
+
+// The catalog root-folder language, refreshed from the config on every
+// discovery (startup, scan, config save) - onMusicBrowse gets no user locale.
+let catalogLanguage = DEFAULT_CATALOG_LANGUAGE;
+
+/**
+ * Read the configuration: the known IPs, and (cached) the catalog language.
  * @returns {Promise<Array<string>>} The known IPs/hostnames.
  */
 async function getKnownIps() {
   const config = (await gladys.getConfig()) || {};
+  catalogLanguage = config[CONFIG_SCHEMA_KEYS.CATALOG_LANGUAGE] || DEFAULT_CATALOG_LANGUAGE;
   return parseKnownIps(config[CONFIG_SCHEMA_KEYS.KNOWN_IPS]);
 }
 
@@ -124,13 +179,19 @@ gladys.onSetValue(async (device, feature, value) => {
     logger.debug(`onSetValue -> ${feature.external_id} succeeded`);
   } catch (e) {
     logger.error(`onSetValue -> ${feature.external_id} failed: ${e.message}`);
+    if (isUnreachableError(e)) {
+      scheduleRediscovery('command failed, speaker unreachable');
+    }
     throw e;
   }
 });
 
 // --- Poll: Gladys asks for the current state of a device ---------------------
 gladys.onPoll(async (device) => {
-  await pollDevice(gladys, client, device);
+  const ok = await pollDevice(gladys, client, device);
+  if (!ok) {
+    scheduleRediscovery('poll failed, speaker unreachable');
+  }
 });
 
 // --- Music player: on-demand catalog, search, queue and play -----------------
@@ -141,7 +202,7 @@ gladys.onPoll(async (device) => {
 // Sonos serves images small enough as is.
 gladys.onMusicBrowse(async (device, params) => {
   logger.debug(`onMusicBrowse <- parentId=${params.parentId}`);
-  return musicBrowse(gladys, client, device, params);
+  return musicBrowse(gladys, client, device, params, catalogLanguage);
 });
 
 gladys.onMusicSearch(async (device, params) => {
